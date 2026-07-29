@@ -1,0 +1,9 @@
+<mujoco model="scene">
+
+    <option timestep="0.02" gravity="0 0 -9.81" integrator="RK4"/>
+
+    <worldbody>
+
+        
+    </worldbody>
+</mujoco>
