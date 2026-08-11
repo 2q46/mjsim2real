@@ -1,0 +1,1 @@
+python -m mujoco.viewer --mjcf env/scene.xml
