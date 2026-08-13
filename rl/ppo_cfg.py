@@ -1,18 +1,25 @@
-from dataclasses import dataclass
+import flax.struct as struct
+from typing import Tuple
 
-@dataclass(frozen=True, slots=True)
-class ModelConfig:
+@struct.dataclass
+class ActorConfig:
 
     img_size: int = 128
-    in_channels: int = 3
-    out_channels: int = 6
+    output_features: int = 6
+    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
     start_log_std: float = -0.5
 
-@dataclass(frozen=True, slots=True)
-class TrainingConfig:
 
-    lr: float = 1e-3
-    batch_size: int = 128
+@struct.dataclass
+class CriticConfig:
+
+    img_size: int = 128,
+    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
+    kernel_size: tuple = (3, 3)
+    dropout_rate: float = 5e-2
+
     

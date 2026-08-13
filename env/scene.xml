@@ -18,8 +18,12 @@
     </asset>
 
     <worldbody>
+        <camera name="cam0" pos="0.808 -0.165 0.370" xyaxes="0.342 0.940 0.000 -0.321 0.117 0.940"/>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
-        <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
-        <geom name="red_cube" size="0.02 0.02 0.02" type="box" pos="0.2 0.2 0.01" rgba="1 0 0 1" />
+        <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane" />
+        <body name="redcube" pos="0.2 0.2 0.05">
+            <freejoint/>
+            <geom name="red_cube" size="0.02 0.02 0.02" type="box" rgba="1 0 0 1" />
+        </body>
     </worldbody>
 </mujoco>
