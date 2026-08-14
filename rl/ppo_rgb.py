@@ -2,7 +2,30 @@ import jax
 from distrax import MultivariateNormalDiag
 import jax.numpy as jnp
 import flax.linen as nn
-from ppo_cfg import ActorConfig, CriticConfig
+import flax.struct as struct
+from typing import Tuple
+
+@struct.dataclass
+class ActorConfig:
+
+    img_size: int = 128
+    output_features: int = 6
+    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
+    kernel_size: tuple = (3, 3)
+    dropout_rate: float = 5e-2
+    start_log_std: float = -0.5
+
+
+@struct.dataclass
+class CriticConfig:
+
+    img_size: int = 128,
+    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
+    kernel_size: tuple = (3, 3)
+    dropout_rate: float = 5e-2
+
 
 class ActorNetwork(nn.Module):
 
@@ -12,23 +35,22 @@ class ActorNetwork(nn.Module):
     def __call__(self, x):
         dtype = jnp.float32
         x = x.astype(dtype) / 255.0
-        n_batches = x.shape[0]
-        log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (n_batches, self.cfg.output_features))
+        log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
         x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[2], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[4], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.tanh(x)
@@ -52,19 +74,19 @@ class CriticNetwork(nn.Module):
         x = x.astype(dtype) / 255.0
         x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[2], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[4], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate)(x)
+        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)
@@ -86,7 +108,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
 
     def update_previous(prev_rew, xs):
         current_rew = xs + prev_rew * gamma_
-        return current_rew
+        return current_rew, current_rew
 
     last_carry, timefirst_discounted_rew = jax.lax.scan(
         update_previous, 
@@ -107,7 +129,7 @@ def compute_advantage_estimates(
     n_batches, n_timesteps = episode_rew.shape[0], episode_rew.shape[1] - 1
     gae_last = episode_rew[:, n_timesteps] - state_value_estimates[:, n_timesteps]
     tfirst_v_t = jnp.moveaxis(state_value_estimates, 1, 0)
-    tfirst_v_next = jnp.concat([tfirst_v_t[1:], jnp.zeros_like((1, n_batches))], axis=0)
+    tfirst_v_next = jnp.concat([tfirst_v_t[1:], jnp.zeros((1, n_batches))], axis=0)
     tfirst_episode_rew = jnp.moveaxis(episode_rew, 1, 0)
     
     def compute_prev_gae(gae_next, xs): 
@@ -125,17 +147,3 @@ def compute_advantage_estimates(
     gae_batch_first = jnp.moveaxis(gae, 0, 1)
     return gae_batch_first
     
-@jax.jit
-def compute_critic_loss(estimated_rew_to_go: jax.Array, gt_rew_to_go: jax.Array):
-    squared_err = jnp.linalg.norm(gt_rew_to_go - estimated_rew_to_go, axis=1)
-    mean_squared_err = jnp.mean(squared_err)
-    return mean_squared_err
-    
-@jax.jit(static_argnums=[3])
-def compute_actor_loss(new_log_prob: jax.Array, old_log_prob: jax.Array, advantage_func: jax.Array, eps=0.05):
-    ratio = jnp.exp(new_log_prob - old_log_prob)
-    cliped_ratio = jnp.clip(ratio, min=1-eps, max=1+eps)
-    surr1 = cliped_ratio * advantage_func
-    surr2 = ratio * advantage_func
-    loss = jnp.minimum(surr1, surr2).mean()
-    return -loss

@@ -22,7 +22,7 @@ def init_rendering(mj_model, num_envs, img_size):
         mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True
     )
     rgb_buffer = wp.zeros(
-        (num_envs, img_size[1], img_size[0]), 
+        (num_envs, immean_episode_rewg_size[1], img_size[0]), 
         dtype=wp.vec3f,
         device="cuda"
     )
@@ -32,7 +32,7 @@ def get_cube_id(mj_model):
     return mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "red_cube")
 
 def get_gripper_id(mj_model):
-    return mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "gripperframe")
+    return mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
 
 def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     mjw.refit_bvh(mjw_model, mjw_data, render_ctx)
@@ -80,9 +80,9 @@ def step_batch(mj_model, mjw_model, mjw_data, ctrl, goal_cube_pos):
         current_ee_pos: jax.Array, 
         tolerance=0.01
         ):
-        ee_cube_inv_norm = (10*tolerance)/jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=1)
+        ee_cube_inv_norm = 1/jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=1)
         clamped_ee_cube_inv_norm = jnp.clip(ee_cube_inv_norm, min=0.0, max=1/tolerance)
-        cube_goal_inv_norm = (10*tolerance)/jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=1)
+        cube_goal_inv_norm = 1/jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=1)
         clamped_cube_goal_inv_norm = jnp.clip(cube_goal_inv_norm, min=0, max=1/tolerance)
         total_rew = clamped_cube_goal_inv_norm + clamped_ee_cube_inv_norm
         return total_rew
