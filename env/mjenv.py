@@ -62,7 +62,7 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     cube_id = get_cube_id(mj_model)
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
-    @partial(jax.jit, static_argnames=["jax_cube_pos"])
+    @jax.jit
     def set_new_height(jax_cube_pos):
         return jax_cube_pos.at[:, 2].add(goal_height)
     return set_new_height(jax_cube_pos)
