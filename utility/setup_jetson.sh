@@ -6,4 +6,4 @@ unset PIP_INDEX_URL
 unset PIP_EXTRA_INDEX_URL
 
 # 3. Install MuJoCo as a single single-line command
-pip install mujoco mujoco-warp warp-lang optax distrax --index-url https://pypi.org/simple
+pip install mujoco mujoco-warp warp-lang optax flax distrax --index-url https://pypi.org/simple
