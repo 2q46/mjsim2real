@@ -22,7 +22,7 @@ def init_rendering(mj_model, num_envs, img_size):
         mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True
     )
     rgb_buffer = wp.zeros(
-        (num_envs, immean_episode_rewg_size[1], img_size[0]), 
+        (num_envs, img_size[1], img_size[0]), 
         dtype=wp.vec3f,
         device="cuda"
     )
@@ -42,7 +42,7 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     return jax_rgb_buff
 
 def reset_batch(mjw_model, mjw_data, rng_key):
-    @jax.jit(static_argnums=[1,2])
+    @jax.jit
     def get_noise_arr(rng_key, qpos_shape, qvel_shape):
         qpos_key, qvel_key = jax.random.split(rng_key, num=2)
         qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.05, maxval=0.05)

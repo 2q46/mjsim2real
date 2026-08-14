@@ -100,7 +100,7 @@ class CriticNetwork(nn.Module):
         x = nn.relu(x)
         return x
 
-@jax.jit(static_argnums=[1])
+@jax.jit
 def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
 
     timefirst_ep_rew = jnp.moveaxis(episode_rew, 1, 0)
@@ -119,7 +119,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
     batchfirst_discounted_rew = jnp.moveaxis(timefirst_discounted_rew, 0, 1)
     return batchfirst_discounted_rew
 
-@jax.jit(static_argnums=[2,3])
+@jax.jit
 def compute_advantage_estimates(
         state_value_estimates: jax.Array,
         episode_rew: jax.Array,
