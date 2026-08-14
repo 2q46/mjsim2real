@@ -6,7 +6,7 @@ unset PIP_EXTRA_INDEX_URL
 
 pip install mujoco mujoco-warp warp-lang --index-url https://pypi.org/simple
 
-pip install msgpack toolz dm-tree opt_einsum typing_extensions tensorflow_probability --index-url https://pypi.org/simple
+pip install msgpack toolz dm-tree opt_einsum mediapy typing_extensions tensorflow_probability --index-url https://pypi.org/simple
 
 pip install --no-deps chex flax optax distrax --index-url https://pypi.org/simple
 

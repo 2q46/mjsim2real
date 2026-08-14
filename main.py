@@ -1,6 +1,7 @@
 import jax
 import time
 import optax
+from functools import partial
 import jax.numpy as jnp
 from rl.ppo_rgb import \
     ActorNetwork, CriticNetwork, ActorConfig, CriticConfig, \
@@ -59,7 +60,7 @@ def main(
     def get_value_estimates(critic_params, obs):
         return critic_network.apply(critic_params, obs)
 
-    def compute_critic_loss(critic_params, obs, gt_rew_to_go: jax.Array):
+    def compute_critic_loss(critic_params, obs, gt_rew_to_go):
         estimated_rew_to_go = critic_network.apply(critic_params, obs).squeeze(-1)
         squared_err = jnp.square(gt_rew_to_go - estimated_rew_to_go)
         return jnp.mean(squared_err)
@@ -74,7 +75,7 @@ def main(
         loss = jnp.minimum(surr1, surr2).mean()
         return -loss
     
-    @jax.jit
+    @partial(jax.jit, static_argnames=["eps"])
     def actor_train_step(actor_params, actions, optim_state, obs, adv_function, old_log_prob, eps=0.05):
         loss, grads = jax.value_and_grad(compute_actor_loss)(actor_params, actions, obs, old_log_prob, adv_function, eps)
         updates, new_opt_state = actor_optim.update(grads, optim_state, actor_params)

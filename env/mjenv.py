@@ -5,6 +5,7 @@ import mediapy as media
 import jax.numpy as jnp
 import mujoco_warp as mjw
 import warp as wp
+from functools import partial
 
 def init_mujoco(num_envs):
     scene_dir_name = "scene.xml"
@@ -42,7 +43,7 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     return jax_rgb_buff
 
 def reset_batch(mjw_model, mjw_data, rng_key):
-    @jax.jit
+    @partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
     def get_noise_arr(rng_key, qpos_shape, qvel_shape):
         qpos_key, qvel_key = jax.random.split(rng_key, num=2)
         qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.05, maxval=0.05)
@@ -61,7 +62,7 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     cube_id = get_cube_id(mj_model)
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
-    @jax.jit
+    @partial(jax.jit, static_argnames=["jax_cube_pos"])
     def set_new_height(jax_cube_pos):
         return jax_cube_pos.at[:, 2].add(goal_height)
     return set_new_height(jax_cube_pos)
@@ -73,7 +74,7 @@ def step_batch(mj_model, mjw_model, mjw_data, ctrl, goal_cube_pos):
     gripper_id = get_gripper_id(mj_model)
     current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
     current_cube_pos = wp.to_jax(mjw_data.xpos[:, cube_id].contiguous())
-    @jax.jit(static_argnums=[3])
+    @partial(jax.jit, static_argnames=["tolerance"])
     def compute_rew(
         cube_goal_pos: jax.Array, 
         current_cube_pos: jax.Array, 

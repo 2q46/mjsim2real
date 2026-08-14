@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import flax.struct as struct
 from typing import Tuple
+from functools import partial
 
 @struct.dataclass
 class ActorConfig:
@@ -100,7 +101,7 @@ class CriticNetwork(nn.Module):
         x = nn.relu(x)
         return x
 
-@jax.jit
+@partial(jax.jit, static_argnames=["gamma_"])
 def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
 
     timefirst_ep_rew = jnp.moveaxis(episode_rew, 1, 0)
@@ -119,7 +120,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
     batchfirst_discounted_rew = jnp.moveaxis(timefirst_discounted_rew, 0, 1)
     return batchfirst_discounted_rew
 
-@jax.jit
+@partial(jax.jit, static_argnames=["gamma_", "lambda_"])
 def compute_advantage_estimates(
         state_value_estimates: jax.Array,
         episode_rew: jax.Array,
