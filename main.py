@@ -74,7 +74,7 @@ def main(
         loss = jnp.minimum(surr1, surr2).mean()
         return -loss
     
-    @jax.jit(static_argnames=["eps"])
+    @jax.jit
     def actor_train_step(actor_params, actions, optim_state, obs, adv_function, old_log_prob, eps=0.05):
         loss, grads = jax.value_and_grad(compute_actor_loss)(actor_params, actions, obs, old_log_prob, adv_function, eps)
         updates, new_opt_state = actor_optim.update(grads, optim_state, actor_params)
@@ -185,7 +185,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_envs", type=int, default=4)
+    parser.add_argument("--num_envs", type=int, default=1024)
     parser.add_argument("--eps", type=float, default=0.05)
     parser.add_argument("--lambda_", type=float, default=0.95)
     parser.add_argument("--gamma_", type=float, default=0.99)
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     parser.add_argument("--image_res", type=tuple, default=(128, 128))
     parser.add_argument("--n_timesteps", type=int, default=300)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_mini_batches", type=int, default=25)
+    parser.add_argument("--n_mini_batches", type=int, default=16)
 
     args = parser.parse_args()
 
