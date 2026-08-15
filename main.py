@@ -106,11 +106,11 @@ def update_buffers(
     t
 ):
     
-    obs_buffer.at[:, t].set(obs.astype(jnp.uint8))
-    act_buffer.at[:, t].set(act)
-    rew_buffer.at[:, t].set(rew)
-    val_buffer.at[:, t].set(val)
-    log_prob_buffer.at[:, t].set(log_prob)
+    obs_buffer = obs_buffer.at[:, t].set(obs.astype(jnp.uint8))
+    act_buffer = act_buffer.at[:, t].set(act)
+    rew_buffer = rew_buffer.at[:, t].set(rew)
+    val_buffer = val_buffer.at[:, t].set(val)
+    log_prob_buffer = log_prob_buffer.at[:, t].set(log_prob)
     return (
         obs_buffer,
         act_buffer,
@@ -301,11 +301,15 @@ def main(args):
             "train/actor_loss": mean_actor_loss,
             "train/critic_loss": mean_critic_loss,
             "train/SPS": SPS,
-            "train/mean_episode_rew": mean_episode_rew,
+            "train/mean_step_rew": mean_episode_rew,
         })
 
+        print(f"actor loss: {actor_loss}")
+        print(f"critic loss: {critic_loss}")
+        print(f"mean rew: {mean_episode_rew}")
+        print(f"steps per second: {SPS}")
         print("="*50)
-        
+    wandb.finish()
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_envs", type=int, default=64)

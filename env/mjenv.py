@@ -15,7 +15,7 @@ def init_mujoco(num_envs):
     print(f"Loading MJCF: {scene_path}")
     mj_model = mujoco.MjModel.from_xml_path(scene_path)
     mjw_model = mjw.put_model(mj_model)
-    mjw_data = mjw.make_data(mj_model, nworld=num_envs)
+    mjw_data = mjw.make_data(mj_model, nworld=num_envs, njmax=200)
     return mj_model, mjw_model, mjw_data
 
 def init_rendering(mj_model, num_envs, img_size):

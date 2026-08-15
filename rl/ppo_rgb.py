@@ -46,7 +46,7 @@ class ActorNetwork(nn.Module):
         x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
 
@@ -80,7 +80,7 @@ class CriticNetwork(nn.Module):
         x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
 
