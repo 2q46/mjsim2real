@@ -1,23 +1,11 @@
-echo "nameserver 1.1.1.1" > /etc/resolv.conf
-echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-
-unset PIP_INDEX_URL
-unset PIP_EXTRA_INDEX_URL
-
-pip install mujoco mujoco-warp warp-lang --index-url https://pypi.org/simple
-
-pip install msgpack toolz dm-tree opt_einsum mediapy typing_extensions tensorflow_probability --index-url https://pypi.org/simple
-
-pip install --no-deps chex flax optax distrax --index-url https://pypi.org/simple
-
-python3 -c "
-import jax
-import flax
-import optax
-import distrax
-
-print('JAX Devices:', jax.devices())
-print('Flax version:', flax.__version__)
-print('Optax version:', optax.__version__)
-print('Distrax version:', distrax.__version__)
-"
+docker run --runtime nvidia -it --rm \
+  --network host \
+  --ipc=host \
+  -v ~/.jax_cache:/tmp/jax_cache \
+  -v ~/.warp_cache:/tmp/warp_cache \
+  -v /home/ishan/mjsim2real:/mjsim2real \
+  -w /mjsim2real \
+  -e XLA_FLAGS="--xla_gpu_autotune_level=0" \
+  -e JAX_COMPILATION_CACHE_DIR=/tmp/jax_cache \
+  -e WARP_CACHE_DIR=/tmp/warp_cache \
+  dustynv/jax:r36.3.0-cu126

@@ -11,7 +11,7 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    features: Tuple[int, ...] = (32, 16, 8, 4, 2)
     dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
@@ -22,7 +22,7 @@ class ActorConfig:
 class CriticConfig:
 
     img_size: int = 128,
-    features: Tuple[int, ...] = (32, 64, 32, 16, 4)
+    features: Tuple[int, ...] = (32, 16, 8, 4, 2)
     dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
@@ -34,7 +34,7 @@ class ActorNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        dtype = jnp.float32
+        dtype = jnp.bfloat16
         x = x.astype(dtype) / 255.0
         log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
         x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
@@ -71,7 +71,7 @@ class CriticNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        dtype = jnp.float32
+        dtype = jnp.bfloat16
         x = x.astype(dtype) / 255.0
         x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
@@ -99,7 +99,7 @@ class CriticNetwork(nn.Module):
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
         x = nn.relu(x)
-        return x
+        return x.astype(jnp.float32)
 
 @partial(jax.jit, static_argnames=["gamma_"])
 def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):

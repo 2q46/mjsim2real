@@ -42,13 +42,14 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     jax_rgb_buff = jnp.array(jnp.from_dlpack(render_buff))
     return jax_rgb_buff
 
-def reset_batch(mjw_model, mjw_data, rng_key):
-    @partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
-    def get_noise_arr(rng_key, qpos_shape, qvel_shape):
-        qpos_key, qvel_key = jax.random.split(rng_key, num=2)
-        qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.05, maxval=0.05)
-        qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.05, maxval=0.05)
-        return qpos_noise, qvel_noise
+@partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
+def get_noise_arr(rng_key, qpos_shape, qvel_shape):
+    qpos_key, qvel_key = jax.random.split(rng_key, num=2)
+    qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.1, maxval=0.1)
+    qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.1, maxval=0.1)
+    return qpos_noise, qvel_noise
+
+def reset_batch(mjw_model, mjw_data, rng_key):   
     qpos_noise, qvel_noise = get_noise_arr(rng_key, mjw_data.qpos.shape, mjw_data.qvel.shape)
     wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise) + mjw_data.qpos)
     wp.copy(mjw_data.qvel, wp.from_jax(qvel_noise) + mjw_data.qvel)
@@ -58,35 +59,36 @@ def sample_action(mjw_data, rng_key):
     size = mjw_data.ctrl.shape
     return jax.random.uniform(rng_key, size, minval=-1.0, maxval=1.0)
 
+@partial(jax.jit, static_argnames=["goal_height"])
+def set_new_height(jax_cube_pos, goal_height):
+    return jax_cube_pos.at[:, 2].add(goal_height)
+
 def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     cube_id = get_cube_id(mj_model)
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
-    @jax.jit
-    def set_new_height(jax_cube_pos):
-        return jax_cube_pos.at[:, 2].add(goal_height)
-    return set_new_height(jax_cube_pos)
+    return set_new_height(jax_cube_pos, goal_height)
 
-def step_batch(mj_model, mjw_model, mjw_data, ctrl, goal_cube_pos):
-    wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
-    mjw.step(mjw_model, mjw_data)
-    cube_id = get_cube_id(mj_model)
-    gripper_id = get_gripper_id(mj_model)
-    current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
-    current_cube_pos = wp.to_jax(mjw_data.xpos[:, cube_id].contiguous())
-    @partial(jax.jit, static_argnames=["tolerance"])
-    def compute_rew(
+
+@partial(jax.jit, static_argnames=["tolerance"])
+def compute_rew(
         cube_goal_pos: jax.Array, 
         current_cube_pos: jax.Array, 
         current_ee_pos: jax.Array, 
         tolerance=0.01
-        ):
-        ee_cube_inv_norm = 1/jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=1)
-        clamped_ee_cube_inv_norm = jnp.clip(ee_cube_inv_norm, min=0.0, max=1/tolerance)
-        cube_goal_inv_norm = 1/jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=1)
-        clamped_cube_goal_inv_norm = jnp.clip(cube_goal_inv_norm, min=0, max=1/tolerance)
-        total_rew = clamped_cube_goal_inv_norm + clamped_ee_cube_inv_norm
-        return total_rew
+    ):
+    ee_cube_inv_norm = 1/jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=1)
+    clamped_ee_cube_inv_norm = jnp.clip(ee_cube_inv_norm, min=0.0, max=1/tolerance)
+    cube_goal_inv_norm = 1/jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=1)
+    clamped_cube_goal_inv_norm = jnp.clip(cube_goal_inv_norm, min=0, max=1/tolerance)
+    total_rew = clamped_cube_goal_inv_norm + clamped_ee_cube_inv_norm
+    return total_rew
+
+def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos):
+    wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
+    mjw.step(mjw_model, mjw_data)
+    current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
+    current_cube_pos = wp.to_jax(mjw_data.xpos[:, cube_id].contiguous())
     reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos)
     return reward
 
@@ -95,15 +97,17 @@ if __name__ == '__main__':
     import numpy as np
     base_key = jax.random.key(12)
     k1, k2, k3 = jax.random.split(base_key, num=3)
-    mj_model, mjw_model, mjw_data = init_mujoco(64)
-    render_ctx, rgb_buff = init_rendering(mj_model, 64, (128, 128))
+    mj_model, mjw_model, mjw_data = init_mujoco(512)
+    render_ctx, rgb_buff = init_rendering(mj_model, 512, (128, 128))
     reset_batch(mjw_model, mjw_data, k2)
+    cube_id = get_cube_id(mj_model)
+    ee_id = get_gripper_id(mj_model)
     goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
     frames = []
     for i in range(100):
         k3, _ = jax.random.split(base_key)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
-        rew = step_batch(mj_model, mjw_model, mjw_data, action, goal_cube_pos)
+        rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos)
         frames.append(np.asarray(obs[0]))
     media.write_video(path="vid.mp4", images=frames)
