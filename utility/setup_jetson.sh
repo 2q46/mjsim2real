@@ -8,4 +8,4 @@ docker run --runtime nvidia -it --rm \
   -e XLA_FLAGS="--xla_gpu_autotune_level=0" \
   -e JAX_COMPILATION_CACHE_DIR=/tmp/jax_cache \
   -e WARP_CACHE_DIR=/tmp/warp_cache \
-  dustynv/jax:r36.3.0-cu126
+  mjsim2real:v1

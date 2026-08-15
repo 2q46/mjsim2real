@@ -1,8 +1,7 @@
 import os
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
-
+#os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
 
 import argparse
 from functools import partial
@@ -10,6 +9,7 @@ import time
 import jax
 import jax.numpy as jnp
 import optax
+import wandb
 
 from env.mjenv import (
     find_goal_cube_pos,
@@ -30,7 +30,6 @@ from rl.ppo_rgb import (
     compute_rew_to_go,
 )
 
-
 def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05, ent_coef=0.01):
     policy = apply_fn(params, obs_float)
     new_log_prob = policy.log_prob(actions)
@@ -48,7 +47,7 @@ def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advan
 
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
-    estimated_rew_to_go = apply_fn(params, obs_float).squeeze(-1)
+    estimated_rew_to_go = apply_fn(params, obs_float)
     gt_rew_to_go = jnp.reshape(gt_rew_to_go, estimated_rew_to_go.shape)
     return jnp.mean(jnp.square(gt_rew_to_go - estimated_rew_to_go))
 
@@ -92,7 +91,80 @@ def actor_critic_train_step(
     )
 
 
+@jax.jit
+def update_buffers(
+    obs_buffer,
+    act_buffer,
+    rew_buffer,
+    val_buffer,
+    log_prob_buffer,
+    obs,
+    act,
+    rew,
+    val,
+    log_prob,
+    t
+):
+    
+    obs_buffer.at[:, t].set(obs.astype(jnp.uint8))
+    act_buffer.at[:, t].set(act)
+    rew_buffer.at[:, t].set(rew)
+    val_buffer.at[:, t].set(val)
+    log_prob_buffer.at[:, t].set(log_prob)
+    return (
+        obs_buffer,
+        act_buffer,
+        rew_buffer,
+        val_buffer,
+        log_prob_buffer
+    )
+
+
+@jax.jit(static_argnums=[7, 8])
+def flatten_buffers(
+    obs_buffer,
+    act_buffer,
+    rew_buffer,
+    val_buffer,
+    log_prob_buffer,
+    adv_estimates,
+    rew_to_go,
+    image_res,
+    total_samples
+):
+    rew_to_go = jnp.reshape(rew_to_go, (total_samples))
+    adv_estimates = jnp.reshape(adv_estimates, (total_samples))
+    val_buffer = jnp.reshape(val_buffer, (total_samples))
+    obs_buffer = jnp.reshape(obs_buffer, (total_samples, *image_res, 3))
+    act_buffer = jnp.reshape(act_buffer, (total_samples, 6))
+    rew_buffer = jnp.reshape(rew_buffer, (total_samples))
+    log_prob_buffer = jnp.reshape(log_prob_buffer, (total_samples))
+    return (
+        obs_buffer,
+        act_buffer,
+        rew_buffer,
+        val_buffer,
+        log_prob_buffer,
+        adv_estimates,
+        rew_to_go
+    )
+
 def main(args):
+
+    wandb.init(
+        project="PickCube-mjsim2real-rl",
+        tags=["ppo"],
+        config={
+            "epochs": args.num_epochs, 
+            "gamma": args.gamma_,
+            "lambda": args.lambda_,
+            "train_envs": args.num_envs,
+            "image_res": args.image_res,
+            "lr": args.lr,
+            "eps": args.eps
+        }
+    )
+
     num_envs = args.num_envs
     image_res = tuple(args.image_res)
 
@@ -123,133 +195,120 @@ def main(args):
 
     actor_opt_state = actor_optim.init(actor_params)
     critic_opt_state = critic_optim.init(critic_params)
-
     total_samples = num_envs * args.n_timesteps
     batch_size = total_samples // args.n_mini_batches
 
-    cube_id = get_cube_id(mj_model)
-    gripper_id = get_gripper_id(mj_model)
-
     eval_policy = jax.jit(actor_network.apply)
     eval_value = jax.jit(critic_network.apply)
+    
+    cube_id = get_cube_id(mj_model)
+    gripper_id = get_gripper_id(mj_model)
+    
+    for i in range(args.num_epochs):
 
-    for epoch in range(args.num_epochs):
-        start_epoch_t = time.time()
+        print("="*50)
+        print(f"Epoch number {i+1}")
+        start_t = time.time()
 
-        main_rng_key, reset_key, rollout_key = jax.random.split(main_rng_key, 3)
+        obs_buffer = jnp.empty((args.num_envs, args.n_timesteps, *image_res, 3), dtype=jnp.uint8)
+        act_buffer = jnp.empty((args.num_envs, args.n_timesteps, 6), dtype=jnp.float32)
+        log_prob_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
+        rew_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
+        val_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
+        timestep_keys = jax.random.split(main_rng_key, num=args.n_timesteps)
+        reset_key, _ = jax.random.split(main_rng_key, num=2)
+
         reset_batch(mjw_model, mjw_data, reset_key)
         goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
-
-        obs_buffer, actions_buff, log_prob_buff = [], [], []
-        value_buff, reward_buff = [], []
-
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
-        timesteps_rng = jax.random.split(rollout_key, num=args.n_timesteps)
 
-        for i in range(args.n_timesteps):
-            # Convert to float32 [0, 1] during inference pass
-            obs_float = obs.astype(jnp.float32) / 255.0
+        for t in range(args.n_timesteps):
 
-            policy = eval_policy(actor_params, obs_float)
-            value = eval_value(critic_params, obs_float).squeeze(-1)
+            policy = eval_policy(actor_params, obs)
+            value = eval_value(critic_params, obs)
+            actions, log_prob = policy.sample_and_log_prob(seed=timestep_keys[t])
+            rew = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
+            new_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
+            obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer = update_buffers(
+                    obs_buffer,
+                    act_buffer,
+                    rew_buffer,
+                    val_buffer,
+                    log_prob_buffer,
+                    obs,
+                    actions,
+                    rew,
+                    value,
+                    log_prob,
+                    t
+            )
+            obs = new_obs
 
-            action, log_prob = policy.sample_and_log_prob(seed=timesteps_rng[i])
+        SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
 
-            rew = step_batch(cube_id, gripper_id, mjw_model, mjw_data, action, goal_cube_pos)
-            next_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
+        rew_to_go = compute_rew_to_go(rew_buffer, args.gamma_)
+        adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
 
-            reward_buff.append(rew)
-            log_prob_buff.append(log_prob)
-            obs_buffer.append(obs.astype(jnp.uint8))
-            actions_buff.append(action)
-            value_buff.append(value)
-
-            obs = next_obs
-
-        delta_t = time.time() - start_epoch_t
-        SPS = int(total_samples / delta_t)
-
-        obs_arr = jnp.stack(obs_buffer, axis=1)
-        actions_arr = jnp.stack(actions_buff, axis=1)
-        log_prob_arr = jnp.stack(log_prob_buff, axis=1)
-        value_arr = jnp.stack(value_buff, axis=1)
-        reward_arr = jnp.stack(reward_buff, axis=1)
-
-        rew_to_go = compute_rew_to_go(reward_arr, args.gamma_)
-        advantage_estimates = compute_advantage_estimates(value_arr, reward_arr, args.gamma_, args.lambda_)
-
-        obs_flat = obs_arr.reshape((total_samples, *image_res, 3))
-        actions_flat = actions_arr.reshape((total_samples, -1))
-        log_prob_flat = log_prob_arr.reshape((total_samples,))
-        rew_to_go_flat = rew_to_go.reshape((total_samples,))
-        adv_flat = advantage_estimates.reshape((total_samples,))
-
-        adv_flat = (adv_flat - jnp.mean(adv_flat)) / (jnp.std(adv_flat) + 1e-8)
-
-        epoch_actor_loss = 0.0
-        epoch_critic_loss = 0.0
-
-        for _ in range(args.ppo_epochs):
-            main_rng_key, perm_key = jax.random.split(main_rng_key)
-            perm_indices = jax.random.permutation(perm_key, total_samples)
-
-            for n in range(args.n_mini_batches):
-                start_idx = n * batch_size
-                end_idx = (n + 1) * batch_size
-                batch_inds = perm_indices[start_idx:end_idx]
-
-                batch_obs = obs_flat[batch_inds]  # Keep in uint8 until inside train step
-                batch_act = actions_flat[batch_inds]
-                batch_log_prob = log_prob_flat[batch_inds]
-                batch_rew_to_go = rew_to_go_flat[batch_inds]
-                batch_adv = adv_flat[batch_inds]
-
-                (
-                    actor_params,
-                    critic_params,
-                    actor_opt_state,
-                    critic_opt_state,
-                    actor_loss,
-                    critic_loss,
-                ) = actor_critic_train_step(
-                    actor_params,
-                    critic_params,
-                    actor_network.apply,
-                    critic_network.apply,
-                    actor_optim.update,
-                    critic_optim.update,
-                    actor_opt_state,
-                    critic_opt_state,
-                    batch_obs,
-                    batch_act,
-                    batch_log_prob,
-                    batch_adv,
-                    batch_rew_to_go,
-                    args.eps,
-                    args.ent_coef,
-                )
-
-                # 3. Block async execution queue from piling up in VRAM
-                actor_loss.block_until_ready()
-
-                epoch_actor_loss += actor_loss
-                epoch_critic_loss += critic_loss
-
-        total_updates = args.ppo_epochs * args.n_mini_batches
-        mean_actor_loss = epoch_actor_loss / total_updates
-        mean_critic_loss = epoch_critic_loss / total_updates
-        mean_ep_rew = jnp.mean(rew_to_go)
-
-        print(
-            f"Epoch {epoch + 1}/{args.num_epochs} | "
-            f"Ep Rew: {mean_ep_rew:.2f} | SPS: {SPS} | "
-            f"Actor Loss: {mean_actor_loss:.4f} | Critic Loss: {mean_critic_loss:.4f}"
+        obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
+            obs_buffer, 
+            act_buffer, 
+            rew_buffer, 
+            val_buffer, 
+            log_prob_buffer, 
+            adv_estimates, 
+            rew_to_go, 
+            image_res, 
+            total_samples
         )
 
+        mean_actor_loss, mean_critic_loss = 0.0, 0.0
+        
+        for n in range(args.n_mini_batches):
 
+            max_idx, min_idx = ((n+1) * batch_size), (n * batch_size)
+
+            sampled_obs_buff = obs_buffer[min_idx: max_idx]
+            sampled_batch_act = act_buffer[min_idx: max_idx]
+            sampled_batch_log_prob = log_prob_buffer[min_idx: max_idx]
+            sampled_batch_adv = adv_estimates[min_idx: max_idx]
+            sampled_batch_rew_to_go = rew_to_go[min_idx: max_idx]
+
+            actor_params, critic_params, actor_opt_state, critic_opt_state, actor_loss, critic_loss = actor_critic_train_step(
+                actor_params,
+                critic_params,
+                actor_network.apply,
+                critic_network.apply,
+                actor_optim.update,
+                critic_optim.update,
+                actor_opt_state,
+                critic_opt_state,
+                sampled_obs_buff,
+                sampled_batch_act,
+                sampled_batch_log_prob,
+                sampled_batch_adv,
+                sampled_batch_rew_to_go,
+                args.eps,
+                args.ent_coef,
+            )
+            mean_actor_loss += actor_loss
+            mean_critic_loss += critic_loss
+
+        mean_actor_loss /= args.n_mini_batches
+        mean_critic_loss /= args.n_mini_batches
+        mean_episode_rew = jnp.mean(rew_buffer)
+
+        wandb.log({
+            "train/actor_loss": mean_actor_loss,
+            "train/critic_loss": mean_critic_loss,
+            "train/SPS": SPS,
+            "train/mean_episode_rew": mean_episode_rew,
+        })
+
+        print("="*50)
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_envs", type=int, default=32)
+    parser.add_argument("--num_envs", type=int, default=64)
     parser.add_argument("--eps", type=float, default=0.2)
     parser.add_argument("--ent_coef", type=float, default=0.01)
     parser.add_argument("--lambda_", type=float, default=0.95)
@@ -261,7 +320,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_mini_batches", type=int, default=32)  # Increased from 16 to 32
+    parser.add_argument("--n_mini_batches", type=int, default=4)  
 
     args = parser.parse_args()
 

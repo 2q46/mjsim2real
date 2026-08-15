@@ -11,8 +11,8 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (32, 16, 8, 4, 2)
-    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
+    features: Tuple[int, ...] = (16, 8, 8, 4, 1)
+    dense_features: Tuple[int, ...] = (512, 512, 256, 64)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
     start_log_std: float = -0.5
@@ -22,8 +22,8 @@ class ActorConfig:
 class CriticConfig:
 
     img_size: int = 128,
-    features: Tuple[int, ...] = (32, 16, 8, 4, 2)
-    dense_features: Tuple[int, ...] = (1024, 512, 256, 64)
+    features: Tuple[int, ...] = (16, 8, 8, 4, 1)
+    dense_features: Tuple[int, ...] = (512, 512, 256, 64)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
 
@@ -37,21 +37,19 @@ class ActorNetwork(nn.Module):
         dtype = jnp.bfloat16
         x = x.astype(dtype) / 255.0
         log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
-        x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[1], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[2], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[3], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[4], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
+
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.tanh(x)
@@ -73,21 +71,19 @@ class CriticNetwork(nn.Module):
     def __call__(self, x):
         dtype = jnp.bfloat16
         x = x.astype(dtype) / 255.0
-        x = nn.Conv(features=self.cfg.features[0], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[1], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[2], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[3], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[4], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
+
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)
@@ -98,7 +94,7 @@ class CriticNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
-        x = nn.relu(x)
+        x = nn.relu(x).squeeze(-1)
         return x.astype(jnp.float32)
 
 @partial(jax.jit, static_argnames=["gamma_"])

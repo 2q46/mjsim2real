@@ -20,7 +20,7 @@ def init_mujoco(num_envs):
 
 def init_rendering(mj_model, num_envs, img_size):
     render_ctx = mjw.create_render_context(
-        mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True
+        mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True, use_shadows=True
     )
     rgb_buffer = wp.zeros(
         (num_envs, img_size[1], img_size[0]), 
@@ -85,6 +85,7 @@ def compute_rew(
     return total_rew
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos):
+
     wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
     mjw.step(mjw_model, mjw_data)
     current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
