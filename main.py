@@ -48,6 +48,7 @@ def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advan
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
     estimated_rew_to_go = apply_fn(params, obs_float)
+    gt_rew_to_go = (gt_rew_to_go - gt_rew_to_go.mean()) / (gt_rew_to_go.std() + 1e-5)
     gt_rew_to_go = jnp.reshape(gt_rew_to_go, estimated_rew_to_go.shape)
     return jnp.mean(jnp.square(gt_rew_to_go - estimated_rew_to_go))
 
@@ -248,6 +249,7 @@ def main(args):
 
         rew_to_go = compute_rew_to_go(rew_buffer, args.gamma_)
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
+        print(rew_to_go.mean())
 
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
             obs_buffer, 
@@ -309,7 +311,9 @@ def main(args):
         print(f"mean rew: {mean_episode_rew}")
         print(f"steps per second: {SPS}")
         print("="*50)
+
     wandb.finish()
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_envs", type=int, default=64)

@@ -94,7 +94,7 @@ class CriticNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
-        x = nn.relu(x).squeeze(-1)
+        x = x.squeeze(-1)
         return x.astype(jnp.float32)
 
 @partial(jax.jit, static_argnames=["gamma_"])
@@ -142,5 +142,6 @@ def compute_advantage_estimates(
         reverse=True
     )
     gae_batch_first = jnp.moveaxis(gae, 0, 1)
+    gae_batch_first = (gae_batch_first - gae_batch_first.mean()) / (1e-5 + gae_batch_first.std())
     return gae_batch_first
     
