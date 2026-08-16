@@ -48,7 +48,6 @@ def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advan
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
     estimated_rew_to_go = apply_fn(params, obs_float)
-    gt_rew_to_go = (gt_rew_to_go - gt_rew_to_go.mean()) / (gt_rew_to_go.std() + 1e-5)
     gt_rew_to_go = jnp.reshape(gt_rew_to_go, estimated_rew_to_go.shape)
     return jnp.mean(jnp.square(gt_rew_to_go - estimated_rew_to_go))
 
@@ -217,7 +216,7 @@ def main(args):
         rew_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
         val_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
         timestep_keys = jax.random.split(main_rng_key, num=args.n_timesteps)
-        reset_key, _ = jax.random.split(main_rng_key, num=2)
+        reset_key, main_rng_key = jax.random.split(main_rng_key, num=2)
 
         reset_batch(mjw_model, mjw_data, reset_key)
         goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
@@ -249,7 +248,6 @@ def main(args):
 
         rew_to_go = compute_rew_to_go(rew_buffer, args.gamma_)
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
-        print(rew_to_go.mean())
 
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
             obs_buffer, 
