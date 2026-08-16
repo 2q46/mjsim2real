@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
     opt_einsum \
     typing_extensions \
     mediapy \
+    wandb \
     tensorflow_probability --index-url https://pypi.org/simple
 
 RUN pip install --no-cache-dir --no-deps \
