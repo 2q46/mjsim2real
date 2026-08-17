@@ -26,6 +26,7 @@ from rl.ppo_rgb import (
     ActorNetwork,
     CriticConfig,
     CriticNetwork,
+    compute_adv_estimates,
     compute_advantage_estimates,
     compute_rew_to_go,
 )
@@ -245,7 +246,7 @@ def main(args):
         SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
 
         rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, args.gamma_)
-        adv_estimates = compute_advantage_estimates(val_buffer, rew_to_go)
+        adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
 
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
             obs_buffer, 
@@ -318,7 +319,7 @@ if __name__ == "__main__":
     parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=400)
     parser.add_argument("--ppo_epochs", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=2e-3)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--checkpoint_freq", type=int, default=10)
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)

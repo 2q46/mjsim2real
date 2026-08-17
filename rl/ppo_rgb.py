@@ -11,8 +11,8 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (16, 8, 8, 4, 1)
-    dense_features: Tuple[int, ...] = (512, 512, 256, 64)
+    features: Tuple[int, ...] = (16, 8, 4, 2, 1)
+    dense_features: Tuple[int, ...] = (64, 32, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
     start_log_std: float = -0.5
@@ -22,8 +22,8 @@ class ActorConfig:
 class CriticConfig:
 
     img_size: int = 128
-    features: Tuple[int, ...] = (16, 8, 8, 4, 1)
-    dense_features: Tuple[int, ...] = (512, 512, 256, 64)
+    features: Tuple[int, ...] = (16, 8, 4, 2, 1)
+    dense_features: Tuple[int, ...] =(64, 32, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
 
@@ -60,7 +60,7 @@ class ActorNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.tanh(x)
         x = nn.Dense(self.cfg.output_features, dtype=dtype)(x)
-        x = 2*nn.tanh(x)
+        x = nn.tanh(x)
         return MultivariateNormalDiag(x, jnp.exp(log_std))
 
 class CriticNetwork(nn.Module):
@@ -94,8 +94,7 @@ class CriticNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
-        x = 40*x.squeeze(-1)
-        return x
+        return x.squeeze(-1)
 
 @partial(jax.jit, static_argnames=["gamma_"])
 def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
@@ -115,7 +114,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
         reverse=True
     )
     batchfirst_discounted_rew = jnp.moveaxis(timefirst_discounted_rew, 0, 1)
-    #batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (1e-8 + batchfirst_discounted_rew.std())
+    batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (1e-8 + batchfirst_discounted_rew.std())
     return batchfirst_discounted_rew, mean_episode_rew
 
 @partial(jax.jit)
@@ -131,19 +130,17 @@ def compute_adv_estimates(
 
 @partial(jax.jit, static_argnames=["gamma_", "lambda_"])
 def compute_advantage_estimates(
-        state_value_estimates: jax.Array, # Shape: (n_batches, n_timesteps)
-        episode_rew: jax.Array,           # Shape: (n_batches, n_timesteps)
+        state_value_estimates: jax.Array, 
+        episode_rew: jax.Array,           
         gamma_: float = 0.99,
         lambda_: float = 0.95
     ): 
     n_batches = episode_rew.shape[0]
     
-    # 1. Shift state values to construct v_next for every step
     tfirst_v_t = jnp.moveaxis(state_value_estimates, 1, 0)
     
     next_value = jnp.zeros((1, n_batches))
     
-    # v_next[t] is V(s_{t+1}). For the final step, it uses next_value.
     tfirst_v_next = jnp.concatenate([tfirst_v_t[1:], next_value], axis=0)
     tfirst_episode_rew = jnp.moveaxis(episode_rew, 1, 0)
     
@@ -153,7 +150,6 @@ def compute_advantage_estimates(
         gae_now = delta + (gamma_ * lambda_) * gae_next
         return gae_now, gae_now
 
-    # 2. Start carry at ZERO. The scan naturally computes gae_last on iteration 0.
     initial_gae = jnp.zeros(n_batches)
 
     _, gae = jax.lax.scan(

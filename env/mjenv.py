@@ -45,13 +45,14 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
 @partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
 def get_noise_arr(rng_key, qpos_shape, qvel_shape):
     qpos_key, qvel_key = jax.random.split(rng_key, num=2)
-    qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.1, maxval=0.1)
-    qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.1, maxval=0.1)
+    qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.05, maxval=0.05)
+    qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.05, maxval=0.05)
     return qpos_noise, qvel_noise
 
 def reset_batch(mjw_model, mjw_data, rng_key):   
     qpos_noise, qvel_noise = get_noise_arr(rng_key, mjw_data.qpos.shape, mjw_data.qvel.shape)
-    wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise))
+    init_qpos = wp.to_jax(mjw_model.qpos0)
+    wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise+init_qpos))
     wp.copy(mjw_data.qvel, wp.from_jax(qvel_noise))
     mjw.forward(mjw_model, mjw_data)
 
@@ -79,11 +80,11 @@ def compute_rew(
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    rew_reach =  0.5 *(1.0 - jnp.tanh(dist_ee_cube))
-    rew_move = 0.5 * (1.0 - jnp.tanh(dist_cube_goal))
+    rew_reach =  1.5 *(1.0 - jnp.tanh(2*dist_ee_cube))
+    rew_move = 0.5 * (1.0 - jnp.tanh(2*dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
-    total_reward = (rew_reach + (is_touching * rew_move) + 2*is_success) / 3
+    total_reward = (rew_reach + (is_touching * rew_move) + 2*is_success)
     return total_reward
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
 
@@ -112,5 +113,6 @@ if __name__ == '__main__':
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
         rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos)
-        frames.append(np.asarray(obs[0]))
+        print(rew)
+        frames.append(np.asarray(obs[0], dtype=np.uint8))
     media.write_video(path="vid.mp4", images=frames)
