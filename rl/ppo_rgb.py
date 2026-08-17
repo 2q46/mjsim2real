@@ -115,7 +115,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
         reverse=True
     )
     batchfirst_discounted_rew = jnp.moveaxis(timefirst_discounted_rew, 0, 1)
-    batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (batchfirst_discounted_rew.std() + 1e-8)
+    batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (1e-8 + batchfirst_discounted_rew.std())
     return batchfirst_discounted_rew, mean_episode_rew
 
 @partial(jax.jit, static_argnames=["gamma_", "lambda_"])
