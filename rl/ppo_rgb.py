@@ -94,7 +94,7 @@ class CriticNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
-        x = x.squeeze(-1)
+        x = 40*x.squeeze(-1)
         return x
 
 @partial(jax.jit, static_argnames=["gamma_"])
@@ -115,8 +115,19 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
         reverse=True
     )
     batchfirst_discounted_rew = jnp.moveaxis(timefirst_discounted_rew, 0, 1)
-    batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (1e-8 + batchfirst_discounted_rew.std())
+    #batchfirst_discounted_rew = (batchfirst_discounted_rew - batchfirst_discounted_rew.mean()) / (1e-8 + batchfirst_discounted_rew.std())
     return batchfirst_discounted_rew, mean_episode_rew
+
+@partial(jax.jit)
+def compute_adv_estimates(
+    state_value_estimates: jax.Array,
+    gt_rew_to_go: jax.Array
+):
+
+    adv_estimates = gt_rew_to_go - state_value_estimates
+    adv_estimates = adv_estimates.mean() / (1e-8 + adv_estimates.std())
+    return adv_estimates
+
 
 @partial(jax.jit, static_argnames=["gamma_", "lambda_"])
 def compute_advantage_estimates(
