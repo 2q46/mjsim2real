@@ -244,7 +244,7 @@ def main(args):
 
         SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
 
-        rew_to_go = compute_rew_to_go(rew_buffer, args.gamma_)
+        rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, args.gamma_)
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
 
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
@@ -293,13 +293,12 @@ def main(args):
 
         mean_actor_loss /= args.n_mini_batches
         mean_critic_loss /= args.n_mini_batches
-        mean_episode_rew = jnp.mean(rew_buffer)
 
         wandb.log({
             "train/actor_loss": mean_actor_loss,
             "train/critic_loss": mean_critic_loss,
             "train/SPS": SPS,
-            "train/mean_step_rew": mean_episode_rew,
+            "train/mean_episode_rew": mean_episode_rew,
         })
 
         print(f"actor loss: {mean_actor_loss}")

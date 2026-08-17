@@ -39,7 +39,7 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     mjw.refit_bvh(mjw_model, mjw_data, render_ctx)
     mjw.render(mjw_model, mjw_data, render_ctx)
     mjw.get_rgb(render_ctx, camera_index=0, rgb_out=render_buff)
-    jax_rgb_buff = jnp.array(jnp.from_dlpack(render_buff))
+    jax_rgb_buff = jnp.array(255*jnp.from_dlpack(render_buff), dtype=jnp.float32)
     return jax_rgb_buff
 
 @partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
@@ -53,7 +53,7 @@ def reset_batch(mjw_model, mjw_data, rng_key):
     qpos_noise, qvel_noise = get_noise_arr(rng_key, mjw_data.qpos.shape, mjw_data.qvel.shape)
     wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise))
     wp.copy(mjw_data.qvel, wp.from_jax(qvel_noise))
-    mjw.kinematics(mjw_model, mjw_data)
+    mjw.forward(mjw_model, mjw_data)
 
 def sample_action(mjw_data, rng_key):
     size = mjw_data.ctrl.shape
@@ -79,22 +79,19 @@ def compute_rew(
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    rew_reach = -10*jnp.exp(dist_ee_cube)
-    rew_move = -10*jnp.exp(dist_cube_goal)
+    rew_reach =  (1.0 - jnp.tanh(dist_ee_cube))
+    rew_move = (1.0 - jnp.tanh(dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
-    staged_rew = rew_reach + rew_move + is_touching * 7.0
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
-    success_bonus = is_success * 13.0
-    total_reward = success_bonus + staged_rew
+    total_reward = rew_reach + (is_touching * rew_move) + (is_success * 2)
     return total_reward
-
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
 
     wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
     for i in range(n_frames):
         mjw.step(mjw_model, mjw_data)
-    current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
-    current_cube_pos = wp.to_jax(mjw_data.xpos[:, cube_id].contiguous())
+    current_ee_pos = wp.to_jax(mjw_data.site_xpos)[:, gripper_id]
+    current_cube_pos = wp.to_jax(mjw_data.xpos)[:, cube_id]
     reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos)
     return reward
 
@@ -103,8 +100,8 @@ if __name__ == '__main__':
     import numpy as np
     base_key = jax.random.key(12)
     k1, k2, k3 = jax.random.split(base_key, num=3)
-    mj_model, mjw_model, mjw_data = init_mujoco(512)
-    render_ctx, rgb_buff = init_rendering(mj_model, 512, (128, 128))
+    mj_model, mjw_model, mjw_data = init_mujoco(2)
+    render_ctx, rgb_buff = init_rendering(mj_model, 2, (128, 128))
     reset_batch(mjw_model, mjw_data, k2)
     cube_id = get_cube_id(mj_model)
     ee_id = get_gripper_id(mj_model)
