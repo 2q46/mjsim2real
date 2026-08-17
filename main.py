@@ -118,7 +118,7 @@ def update_buffers(
     )
 
 
-@jax.jit(static_argnums=[7, 8])
+@partial(jax.jit, static_argnums=[7, 8])
 def flatten_buffers(
     obs_buffer,
     act_buffer,
