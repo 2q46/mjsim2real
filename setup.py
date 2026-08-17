@@ -6,7 +6,7 @@ setup(
     packages=find_packages(
         include=["rl", "rl.*", "env", "env.*", "utility", "utility.*"]
     ),
-    python_requires="==3.11.*",
+    python_requires=">=3.11",
     install_requires=[
         "mediapy",
         "wandb",
