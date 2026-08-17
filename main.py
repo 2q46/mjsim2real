@@ -1,6 +1,6 @@
 import os
 
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+#os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 #os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
 
 import argparse
