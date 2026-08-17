@@ -51,8 +51,8 @@ def get_noise_arr(rng_key, qpos_shape, qvel_shape):
 
 def reset_batch(mjw_model, mjw_data, rng_key):   
     qpos_noise, qvel_noise = get_noise_arr(rng_key, mjw_data.qpos.shape, mjw_data.qvel.shape)
-    wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise) + mjw_data.qpos)
-    wp.copy(mjw_data.qvel, wp.from_jax(qvel_noise) + mjw_data.qvel)
+    wp.copy(mjw_data.qpos, wp.from_jax(qpos_noise))
+    wp.copy(mjw_data.qvel, wp.from_jax(qvel_noise))
     mjw.kinematics(mjw_model, mjw_data)
 
 def sample_action(mjw_data, rng_key):
@@ -75,19 +75,24 @@ def compute_rew(
         cube_goal_pos: jax.Array, 
         current_cube_pos: jax.Array, 
         current_ee_pos: jax.Array, 
-        tolerance=0.01
+        tolerance=0.05
     ):
-    ee_cube_inv_norm = 1/jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=1)
-    clamped_ee_cube_inv_norm = jnp.clip(ee_cube_inv_norm, min=0.0, max=1/tolerance)
-    cube_goal_inv_norm = 1/jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=1)
-    clamped_cube_goal_inv_norm = jnp.clip(cube_goal_inv_norm, min=0, max=1/tolerance)
-    total_rew = clamped_cube_goal_inv_norm + clamped_ee_cube_inv_norm
-    return total_rew
+    dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
+    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
+    rew_reach = -10*jnp.exp(dist_ee_cube)
+    rew_move = -10*jnp.exp(dist_cube_goal)
+    is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
+    staged_rew = rew_reach + rew_move + is_touching * 7.0
+    is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
+    success_bonus = is_success * 13.0
+    total_reward = success_bonus + staged_rew
+    return total_reward
 
-def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos):
+def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
 
     wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
-    mjw.step(mjw_model, mjw_data)
+    for i in range(n_frames):
+        mjw.step(mjw_model, mjw_data)
     current_ee_pos = wp.to_jax(mjw_data.site_xpos[:, gripper_id].contiguous())
     current_cube_pos = wp.to_jax(mjw_data.xpos[:, cube_id].contiguous())
     reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos)
@@ -106,7 +111,7 @@ if __name__ == '__main__':
     goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
     frames = []
     for i in range(100):
-        k3, _ = jax.random.split(base_key)
+        k3, base_key = jax.random.split(base_key)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
         rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos)

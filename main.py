@@ -30,7 +30,7 @@ from rl.ppo_rgb import (
     compute_rew_to_go,
 )
 
-def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05, ent_coef=0.01):
+def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05):
     policy = apply_fn(params, obs_float)
     new_log_prob = policy.log_prob(actions)
     old_log_prob = jnp.reshape(old_log_prob, new_log_prob.shape)
@@ -41,14 +41,12 @@ def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advan
     surr1 = ratio * advantage_func
     surr2 = clipped_ratio * advantage_func
     policy_loss = -jnp.minimum(surr1, surr2).mean()
-    entropy_loss = policy.entropy().mean()
-    total_loss = policy_loss - (ent_coef * entropy_loss)
+    total_loss = policy_loss
     return total_loss
 
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
     estimated_rew_to_go = apply_fn(params, obs_float)
-    gt_rew_to_go = jnp.reshape(gt_rew_to_go, estimated_rew_to_go.shape)
     return jnp.mean(jnp.square(gt_rew_to_go - estimated_rew_to_go))
 
 @partial(jax.jit, static_argnums=(2, 3, 4, 5))
@@ -70,7 +68,7 @@ def actor_critic_train_step(
     ent_coef,
 ):
     actor_loss, actor_grads = jax.value_and_grad(compute_actor_loss)(
-        actor_params, actor_apply_fn, batch_act, batch_obs, batch_log_prob, batch_adv, eps, ent_coef
+        actor_params, actor_apply_fn, batch_act, batch_obs, batch_log_prob, batch_adv, eps
     )
     actor_updates, new_actor_opt_state = actor_tx_update(actor_grads, actor_opt_state, actor_params)
     new_actor_params = optax.apply_updates(actor_params, actor_updates)
@@ -304,8 +302,8 @@ def main(args):
             "train/mean_step_rew": mean_episode_rew,
         })
 
-        print(f"actor loss: {actor_loss}")
-        print(f"critic loss: {critic_loss}")
+        print(f"actor loss: {mean_actor_loss}")
+        print(f"critic loss: {mean_critic_loss}")
         print(f"mean rew: {mean_episode_rew}")
         print(f"steps per second: {SPS}")
         print("="*50)
@@ -315,9 +313,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_envs", type=int, default=64)
-    parser.add_argument("--eps", type=float, default=0.2)
+    parser.add_argument("--eps", type=float, default=0.1)
     parser.add_argument("--ent_coef", type=float, default=0.01)
-    parser.add_argument("--lambda_", type=float, default=0.95)
+    parser.add_argument("--lambda_", type=float, default=0.85)
     parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=400)
     parser.add_argument("--ppo_epochs", type=int, default=4)
@@ -326,7 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_mini_batches", type=int, default=4)  
+    parser.add_argument("--n_mini_batches", type=int, default=8)  
 
     args = parser.parse_args()
 
