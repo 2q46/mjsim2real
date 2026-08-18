@@ -4,12 +4,17 @@ import os
 #os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
 
 import argparse
+from pathlib import Path
 from functools import partial
 import time
 import jax
 import jax.numpy as jnp
 import optax
+from flax.training.train_state import TrainState
+import orbax.checkpoint as ocp
 import wandb
+import mediapy as media
+import numpy as np
 
 from env.mjenv import (
     find_goal_cube_pos,
@@ -29,6 +34,7 @@ from rl.ppo_rgb import (
     compute_adv_estimates,
     compute_advantage_estimates,
     compute_rew_to_go,
+    compute_eval_metrics
 )
 
 def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05):
@@ -97,11 +103,15 @@ def update_buffers(
     rew_buffer,
     val_buffer,
     log_prob_buffer,
+    is_success_buffer,
+    is_touching_buffer,
     obs,
     act,
     rew,
     val,
     log_prob,
+    is_success,
+    is_touching,
     t
 ):
     
@@ -109,13 +119,17 @@ def update_buffers(
     act_buffer = act_buffer.at[:, t].set(act)
     rew_buffer = rew_buffer.at[:, t].set(rew)
     val_buffer = val_buffer.at[:, t].set(val)
+    is_success_buffer = is_success_buffer.at[:, t].set(is_success)
+    is_touching_buffer = is_touching_buffer.at[:, t].set(is_touching)
     log_prob_buffer = log_prob_buffer.at[:, t].set(log_prob)
     return (
         obs_buffer,
         act_buffer,
         rew_buffer,
         val_buffer,
-        log_prob_buffer
+        log_prob_buffer,
+        is_success_buffer,
+        is_touching_buffer
     )
 
 
@@ -163,6 +177,7 @@ def main(args):
             "eps": args.eps
         }
     )
+    checkpointer = ocp.StandardCheckpointer()
 
     num_envs = args.num_envs
     image_res = tuple(args.image_res)
@@ -206,7 +221,8 @@ def main(args):
     for i in range(args.num_epochs):
 
         print("="*50)
-        print(f"Epoch number {i+1}")
+        epoch_num = i+1
+        print(f"Epoch number {epoch_num}")
         start_t = time.time()
 
         obs_buffer = jnp.empty((args.num_envs, args.n_timesteps, *image_res, 3), dtype=jnp.uint8)
@@ -214,6 +230,9 @@ def main(args):
         log_prob_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
         rew_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
         val_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
+        success_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.int8)
+        is_touching_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.int8)
+                
         timestep_keys = jax.random.split(main_rng_key, num=args.n_timesteps)
         reset_key, main_rng_key = jax.random.split(main_rng_key, num=2)
 
@@ -226,28 +245,59 @@ def main(args):
             policy = eval_policy(actor_params, obs)
             value = eval_value(critic_params, obs)
             actions, log_prob = policy.sample_and_log_prob(seed=timestep_keys[t])
-            rew = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
+            rew, is_touching, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
             new_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
-            obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer = update_buffers(
+            obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, success_buffer, is_touching_buffer = update_buffers(
                     obs_buffer,
                     act_buffer,
                     rew_buffer,
                     val_buffer,
                     log_prob_buffer,
+                    success_buffer,
+                    is_touching_buffer,
                     obs,
                     actions,
                     rew,
                     value,
                     log_prob,
+                    is_success,
+                    is_touching,
                     t
             )
             obs = new_obs
 
         SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
 
+        if i % args.checkpoint_freq == 0 and i >= 250: 
+        
+            obs_arr = np.asarray(obs_buffer[0:16], dtype=np.uint8)
+            for index in range(int(obs_arr.shape[0])):
+                video_frames = np.ascontiguousarray(obs_arr[index])
+                media.write_video(f"videos/epoch_{i}_{index}.mp4", video_frames, fps=24)
+            checkpoint_dir = Path("checkpoints/").absolute()
+        
+            actor_state = TrainState(
+                step=i,
+                apply_fn=actor_network.apply,
+                params=actor_params,
+                tx=actor_optim,
+                opt_state=actor_opt_state
+            )
+            critic_state = TrainState(
+                step=i,
+                apply_fn=critic_network.apply,
+                params=critic_params,
+                tx=critic_optim,
+                opt_state=critic_opt_state
+            )
+            checkpointer.save(checkpoint_dir / f"actor_{i}", actor_state)
+            checkpointer.wait_until_finished()
+            checkpointer.save(checkpoint_dir / f"critic_{i}", critic_state)
+            checkpointer.wait_until_finished()
+
         rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, args.gamma_)
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
-
+        num_success, num_is_touching = compute_eval_metrics(success_buffer, is_touching_buffer)
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
             obs_buffer, 
             act_buffer, 
@@ -300,12 +350,15 @@ def main(args):
             "train/critic_loss": mean_critic_loss,
             "train/SPS": SPS,
             "train/mean_episode_rew": mean_episode_rew,
+            "eval/num_success": num_success,
+            "eval/num_touching": num_is_touching
         })
 
         print(f"actor loss: {mean_actor_loss}")
         print(f"critic loss: {mean_critic_loss}")
         print(f"mean rew: {mean_episode_rew}")
         print(f"steps per second: {SPS}")
+
         print("="*50)
 
     wandb.finish()
@@ -317,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--ent_coef", type=float, default=0.01)
     parser.add_argument("--lambda_", type=float, default=0.95)
     parser.add_argument("--gamma_", type=float, default=0.99)
-    parser.add_argument("--num_epochs", type=int, default=400)
+    parser.add_argument("--num_epochs", type=int, default=800)
     parser.add_argument("--ppo_epochs", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--checkpoint_freq", type=int, default=10)

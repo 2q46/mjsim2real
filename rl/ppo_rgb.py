@@ -12,7 +12,7 @@ class ActorConfig:
     img_size: int = 128
     output_features: int = 6
     features: Tuple[int, ...] = (16, 8, 4, 2, 1)
-    dense_features: Tuple[int, ...] = (64, 32, 32, 16)
+    dense_features: Tuple[int, ...] = (64, 64, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
     start_log_std: float = -0.5
@@ -23,7 +23,7 @@ class CriticConfig:
 
     img_size: int = 128
     features: Tuple[int, ...] = (16, 8, 4, 2, 1)
-    dense_features: Tuple[int, ...] =(64, 32, 32, 16)
+    dense_features: Tuple[int, ...] =(64, 64, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
 
@@ -118,7 +118,7 @@ def compute_rew_to_go(episode_rew: jax.Array, gamma_: float=0.99):
     return batchfirst_discounted_rew, mean_episode_rew
 
 @partial(jax.jit)
-def compute_adv_estimates(
+def compute_adv_estimates( # Q - V
     state_value_estimates: jax.Array,
     gt_rew_to_go: jax.Array
 ):
@@ -129,7 +129,7 @@ def compute_adv_estimates(
 
 
 @partial(jax.jit, static_argnames=["gamma_", "lambda_"])
-def compute_advantage_estimates(
+def compute_advantage_estimates( # GAE
         state_value_estimates: jax.Array, 
         episode_rew: jax.Array,           
         gamma_: float = 0.99,
@@ -161,6 +161,14 @@ def compute_advantage_estimates(
     
     gae_batch_first = jnp.moveaxis(gae, 0, 1)
     
-    # 3. Standardize advantages
     gae_batch_first = (gae_batch_first - gae_batch_first.mean()) / (gae_batch_first.std() + 1e-8)
     return gae_batch_first
+
+@partial(jax.jit)
+def compute_eval_metrics(
+    is_success_buffer: jax.Array, 
+    is_touching_buffer: jax.Array
+    ):
+    num_success = jnp.sum(jnp.any(is_success_buffer, axis=1))
+    num_touching = jnp.sum(jnp.any(is_touching_buffer, axis=1))
+    return num_success, num_touching

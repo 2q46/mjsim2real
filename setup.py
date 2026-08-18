@@ -15,6 +15,7 @@ setup(
         "mujoco-warp",
         "flax",
         "optax",
-        "distrax"
+        "distrax",
+        "orbax"
     ]
 )

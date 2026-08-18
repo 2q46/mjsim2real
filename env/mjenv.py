@@ -76,16 +76,20 @@ def compute_rew(
         cube_goal_pos: jax.Array, 
         current_cube_pos: jax.Array, 
         current_ee_pos: jax.Array, 
-        tolerance=0.05
+        tolerance=0.075
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    rew_reach =  1.5 *(1.0 - jnp.tanh(2*dist_ee_cube))
-    rew_move = 0.5 * (1.0 - jnp.tanh(2*dist_cube_goal))
+    rew_reach =   (1.0 - jnp.tanh(2*dist_ee_cube))
+    rew_move = 1.5 * (1.0 - jnp.tanh(2*dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
+    touching_rew = 1.5 * jnp.maximum(rew_reach, is_touching)
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
-    total_reward = (rew_reach + (is_touching * rew_move) + 2*is_success)
-    return total_reward
+    success = is_success.astype(jnp.int8)
+    touching = is_touching.astype(jnp.int8)
+    total_reward = (rew_move + touching_rew + 2*is_success)
+    return total_reward, touching, success
+
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
 
     wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
