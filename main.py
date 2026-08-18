@@ -357,6 +357,8 @@ def main(args):
         print(f"actor loss: {mean_actor_loss}")
         print(f"critic loss: {mean_critic_loss}")
         print(f"mean rew: {mean_episode_rew}")
+        print(f"num is touching: {num_is_touching}")
+        print(f"num success: {num_success}")
         print(f"steps per second: {SPS}")
 
         print("="*50)

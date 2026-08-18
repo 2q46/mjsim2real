@@ -80,8 +80,8 @@ def compute_rew(
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    rew_reach =   (1.0 - jnp.tanh(2*dist_ee_cube))
-    rew_move = 1.5 * (1.0 - jnp.tanh(2*dist_cube_goal))
+    rew_reach =   (1.0 - jnp.tanh(3*dist_ee_cube))
+    rew_move = 1.5 * (1.0 - jnp.tanh(3*dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
     touching_rew = 1.5 * jnp.maximum(rew_reach, is_touching)
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
