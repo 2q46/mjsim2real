@@ -80,14 +80,14 @@ def compute_rew(
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    rew_reach =  1.5 * (1.0 - jnp.tanh(3*dist_ee_cube))
+    rew_reach =  0.5 * (1.0 - jnp.tanh(3*dist_ee_cube))
     rew_move = 1.5 * (1.0 - jnp.tanh(3*dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
-    is_grasped = (dist_ee_cube < 0.02).astype(jnp.float32)
+    is_grasped = (dist_ee_cube < 0.03).astype(jnp.float32)
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
     success = is_success.astype(jnp.int8)
     touching = is_touching.astype(jnp.int8)
-    total_reward = (rew_move + rew_reach + is_grasped + 3*is_success)
+    total_reward = (rew_reach + 2*is_grasped*rew_move + 3*is_success)
     return total_reward, touching, is_grasped, success
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
