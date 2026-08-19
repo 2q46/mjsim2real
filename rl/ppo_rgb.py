@@ -167,8 +167,11 @@ def compute_advantage_estimates( # GAE
 @partial(jax.jit)
 def compute_eval_metrics(
     is_success_buffer: jax.Array, 
-    is_touching_buffer: jax.Array
+    is_touching_buffer: jax.Array,
+    is_grasped_buffer: jax.Array
     ):
     num_success = jnp.sum(jnp.any(is_success_buffer, axis=1))
     num_touching = jnp.sum(jnp.any(is_touching_buffer, axis=1))
-    return num_success, num_touching
+    num_is_grasped = jnp.sum(jnp.any(is_grasped_buffer, axis=1))
+
+    return num_success, num_touching, num_is_grasped

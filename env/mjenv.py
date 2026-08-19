@@ -45,8 +45,8 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
 @partial(jax.jit, static_argnames=["qpos_shape", "qvel_shape"])
 def get_noise_arr(rng_key, qpos_shape, qvel_shape):
     qpos_key, qvel_key = jax.random.split(rng_key, num=2)
-    qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.05, maxval=0.05)
-    qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.05, maxval=0.05)
+    qpos_noise = jax.random.uniform(qpos_key, qpos_shape, minval=-0.03, maxval=0.03)
+    qvel_noise = jax.random.uniform(qvel_key, qvel_shape, minval=-0.03, maxval=0.03)
     return qpos_noise, qvel_noise
 
 def reset_batch(mjw_model, mjw_data, rng_key):   
@@ -76,19 +76,19 @@ def compute_rew(
         cube_goal_pos: jax.Array, 
         current_cube_pos: jax.Array, 
         current_ee_pos: jax.Array, 
-        tolerance=0.075
+        tolerance=0.05
     ):
     dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
     rew_reach =  1.5 * (1.0 - jnp.tanh(3*dist_ee_cube))
     rew_move = 1.5 * (1.0 - jnp.tanh(3*dist_cube_goal))
     is_touching = (dist_ee_cube < tolerance).astype(jnp.float32)
-#    touching_rew = 1.5 * jnp.maximum(rew_reach, is_touching)
+    is_grasped = (dist_ee_cube < 0.01).astype(jnp.float32)
     is_success = (dist_cube_goal < tolerance).astype(jnp.float32)
     success = is_success.astype(jnp.int8)
     touching = is_touching.astype(jnp.int8)
-    total_reward = (rew_move + rew_reach + is_touching + is_success)
-    return total_reward, touching, success
+    total_reward = (rew_move + rew_reach + is_touching + 3*is_success + 2*is_grasped)
+    return total_reward, touching, is_grasped, success
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=10):
 

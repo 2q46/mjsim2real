@@ -105,6 +105,7 @@ def update_buffers(
     log_prob_buffer,
     is_success_buffer,
     is_touching_buffer,
+    is_grasped_buffer,
     obs,
     act,
     rew,
@@ -112,6 +113,7 @@ def update_buffers(
     log_prob,
     is_success,
     is_touching,
+    is_grasped,
     t
 ):
     
@@ -121,6 +123,8 @@ def update_buffers(
     val_buffer = val_buffer.at[:, t].set(val)
     is_success_buffer = is_success_buffer.at[:, t].set(is_success)
     is_touching_buffer = is_touching_buffer.at[:, t].set(is_touching)
+    is_grasped_buffer = is_grasped_buffer.at[:, t].set(is_grasped)
+
     log_prob_buffer = log_prob_buffer.at[:, t].set(log_prob)
     return (
         obs_buffer,
@@ -129,7 +133,8 @@ def update_buffers(
         val_buffer,
         log_prob_buffer,
         is_success_buffer,
-        is_touching_buffer
+        is_touching_buffer,
+        is_grasped_buffer
     )
 
 
@@ -232,7 +237,8 @@ def main(args):
         val_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
         success_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.int8)
         is_touching_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.int8)
-                
+        is_grasped_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.int8)
+
         timestep_keys = jax.random.split(main_rng_key, num=args.n_timesteps)
         reset_key, main_rng_key = jax.random.split(main_rng_key, num=2)
 
@@ -245,9 +251,9 @@ def main(args):
             policy = eval_policy(actor_params, obs)
             value = eval_value(critic_params, obs)
             actions, log_prob = policy.sample_and_log_prob(seed=timestep_keys[t])
-            rew, is_touching, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
+            rew, is_touching, is_grasped, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
             new_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
-            obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, success_buffer, is_touching_buffer = update_buffers(
+            obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, success_buffer, is_touching_buffer, is_grasped_buffer = update_buffers(
                     obs_buffer,
                     act_buffer,
                     rew_buffer,
@@ -255,6 +261,7 @@ def main(args):
                     log_prob_buffer,
                     success_buffer,
                     is_touching_buffer,
+                    is_grasped_buffer,
                     obs,
                     actions,
                     rew,
@@ -262,13 +269,14 @@ def main(args):
                     log_prob,
                     is_success,
                     is_touching,
+                    is_grasped,
                     t
             )
             obs = new_obs
 
         SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
 
-        if i % args.checkpoint_freq == 0 and i >= 250: 
+        if i % args.checkpoint_freq == 0 and i >= 1150: 
         
             obs_arr = np.asarray(obs_buffer[0:16], dtype=np.uint8)
             for index in range(int(obs_arr.shape[0])):
@@ -297,7 +305,7 @@ def main(args):
 
         rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, args.gamma_)
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
-        num_success, num_is_touching = compute_eval_metrics(success_buffer, is_touching_buffer)
+        num_success, num_is_touching, num_is_grasped = compute_eval_metrics(success_buffer, is_touching_buffer, is_grasped_buffer)
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
             obs_buffer, 
             act_buffer, 
@@ -351,7 +359,8 @@ def main(args):
             "train/SPS": SPS,
             "train/mean_episode_rew": mean_episode_rew,
             "eval/num_success": num_success,
-            "eval/num_touching": num_is_touching
+            "eval/num_touching": num_is_touching,
+            "eval/num_grasped": num_is_grasped,
         })
 
         print(f"actor loss: {mean_actor_loss}")
@@ -359,6 +368,7 @@ def main(args):
         print(f"mean rew: {mean_episode_rew}")
         print(f"num is touching: {num_is_touching}")
         print(f"num success: {num_success}")
+        print(f"num grasped: {num_is_grasped}")
         print(f"steps per second: {SPS}")
 
         print("="*50)
@@ -372,7 +382,7 @@ if __name__ == "__main__":
     parser.add_argument("--ent_coef", type=float, default=0.01)
     parser.add_argument("--lambda_", type=float, default=0.95)
     parser.add_argument("--gamma_", type=float, default=0.99)
-    parser.add_argument("--num_epochs", type=int, default=800)
+    parser.add_argument("--num_epochs", type=int, default=1500)
     parser.add_argument("--ppo_epochs", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--checkpoint_freq", type=int, default=10)

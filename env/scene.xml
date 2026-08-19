@@ -22,9 +22,9 @@
     <camera name="cam0" pos="1.112 0.686 0.415" xyaxes="-0.525 0.851 0.000 -0.258 -0.159 0.953"/>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane" />
-        <body name="redcube" pos="0.2 0.2 0.05">
+        <body name="redcube" pos="0.2 0.2 0.015">
             <freejoint/>
-            <geom name="red_cube" size="0.02 0.02 0.02" type="box" rgba="1 0 0 1" />
+            <geom name="red_cube" size="0.015 0.015 0.015" type="box" rgba="1 0 0 1" />
         </body>
     </worldbody>
 </mujoco>
