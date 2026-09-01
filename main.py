@@ -65,8 +65,7 @@ def shuffle_buffers(
     adv_estimates,
     rew_to_go,
     main_key
-    ):
-
+):
     shuffle_key, main_key = jax.random.split(main_key)
     obs_buffer = jax.random.permutation(shuffle_key, obs_buffer)
     act_buffer = jax.random.permutation(shuffle_key, act_buffer)
@@ -81,8 +80,6 @@ def shuffle_buffers(
         log_prob_buffer,
         main_key
     )
-
-
 
 @partial(jax.jit, static_argnums=(2, 3, 4, 5))
 def actor_critic_train_step(
@@ -123,7 +120,6 @@ def actor_critic_train_step(
         critic_loss,
     )
 
-
 @jax.jit
 def update_buffers(
     obs_buffer,
@@ -144,7 +140,6 @@ def update_buffers(
     is_grasped,
     t
 ):
-    
     obs_buffer = obs_buffer.at[:, t].set(obs.astype(jnp.uint8))
     act_buffer = act_buffer.at[:, t].set(act)
     rew_buffer = rew_buffer.at[:, t].set(rew)
@@ -164,7 +159,6 @@ def update_buffers(
         is_touching_buffer,
         is_grasped_buffer
     )
-
 
 @partial(jax.jit, static_argnums=[7, 8])
 def flatten_buffers(
@@ -195,56 +189,68 @@ def flatten_buffers(
         rew_to_go
     )
 
-def main(args):
-
+def main(
+    num_envs: int = 64,
+    eps: float = 0.1,
+    ent_coef: float = 0.01,
+    lambda_: float = 0.95,
+    gamma_: float = 0.95,
+    num_epochs: int = 1500,
+    ppo_epochs: int = 4,
+    lr: float = 3e-4,
+    checkpoint_freq: int = 10,
+    image_res: list = [128, 128],
+    n_timesteps: int = 300,
+    seed: int = 42,
+    n_mini_batches: int = 8,
+):
     wandb.init(
         project="PickCube-mjsim2real-rl",
         tags=["ppo"],
         config={
-            "epochs": args.num_epochs, 
-            "gamma": args.gamma_,
-            "lambda": args.lambda_,
-            "train_envs": args.num_envs,
-            "image_res": args.image_res,
-            "lr": args.lr,
-            "eps": args.eps
+            "epochs": num_epochs, 
+            "gamma": gamma_,
+            "lambda": lambda_,
+            "train_envs": num_envs,
+            "image_res": image_res,
+            "lr": lr,
+            "eps": eps
         }
     )
 
     checkpointer = ocp.StandardCheckpointer()
 
-    num_envs = args.num_envs
-    image_res = tuple(args.image_res)
+    image_res_tuple = tuple(image_res)
 
     mj_model, mjw_model, mjw_data = init_mujoco(num_envs)
-    render_ctx, rgb_buff = init_rendering(mj_model, num_envs, image_res)
+    render_ctx, rgb_buff = init_rendering(mj_model, num_envs, image_res_tuple)
 
-    main_rng_key = jax.random.PRNGKey(args.seed)
+    main_rng_key = jax.random.PRNGKey(seed)
     main_rng_key, actor_rng, critic_rng = jax.random.split(main_rng_key, 3)
 
-    actor_cfg = ActorConfig(img_size=image_res)
-    critic_cfg = CriticConfig(img_size=image_res)
+    actor_cfg = ActorConfig(img_size=image_res_tuple)
+    critic_cfg = CriticConfig(img_size=image_res_tuple)
 
     actor_network = ActorNetwork(cfg=actor_cfg)
     critic_network = CriticNetwork(cfg=critic_cfg)
 
-    dummy_obs = jnp.zeros((1, *image_res, 3), dtype=jnp.float32)
+    dummy_obs = jnp.zeros((1, *image_res_tuple, 3), dtype=jnp.float32)
     actor_params = actor_network.init(actor_rng, dummy_obs)
     critic_params = critic_network.init(critic_rng, dummy_obs)
 
     actor_optim = optax.chain(
-#        optax.clip_by_global_norm(0.5),
-        optax.adam(learning_rate=3e-4, eps=1e-5),
+        optax.clip_by_global_norm(0.5),
+        optax.adam(learning_rate=lr, eps=1e-5),
     ) 
     critic_optim = optax.chain(
-      #  optax.clip_by_global_norm(0.5),
-        optax.adam(learning_rate=3e-4, eps=1e-5),
+        optax.clip_by_global_norm(0.5),
+        optax.adam(learning_rate=lr, eps=1e-5),
     )
 
     actor_opt_state = actor_optim.init(actor_params)
     critic_opt_state = critic_optim.init(critic_params)
-    total_samples = num_envs * args.n_timesteps
-    batch_size = total_samples // args.n_mini_batches
+    total_samples = num_envs * n_timesteps
+    batch_size = total_samples // n_mini_batches
 
     eval_policy = jax.jit(actor_network.apply)
     eval_value = jax.jit(critic_network.apply)
@@ -252,30 +258,30 @@ def main(args):
     cube_id = get_cube_id(mj_model)
     gripper_id = get_gripper_id(mj_model)
     
-    for i in range(args.num_epochs):
+    for i in range(num_epochs):
 
         print("="*50)
         epoch_num = i+1
         print(f"Epoch number {epoch_num}")
         start_t = time.time()
 
-        obs_buffer = jnp.empty((args.num_envs, args.n_timesteps, *image_res, 3), dtype=jnp.uint8)
-        act_buffer = jnp.empty((args.num_envs, args.n_timesteps, 6), dtype=jnp.float32)
-        log_prob_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
-        rew_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
-        val_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.float32)
-        success_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.uint8)
-        is_touching_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.uint8)
-        is_grasped_buffer = jnp.empty((args.num_envs, args.n_timesteps), dtype=jnp.uint8)
+        obs_buffer = jnp.empty((num_envs, n_timesteps, *image_res_tuple, 3), dtype=jnp.uint8)
+        act_buffer = jnp.empty((num_envs, n_timesteps, 6), dtype=jnp.float32)
+        log_prob_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.float32)
+        rew_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.float32)
+        val_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.float32)
+        success_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.uint8)
+        is_touching_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.uint8)
+        is_grasped_buffer = jnp.empty((num_envs, n_timesteps), dtype=jnp.uint8)
 
-        timestep_keys = jax.random.split(main_rng_key, num=args.n_timesteps)
+        timestep_keys = jax.random.split(main_rng_key, num=n_timesteps)
         reset_key, main_rng_key = jax.random.split(main_rng_key, num=2)
 
         reset_batch(mj_model, mjw_model, mjw_data, reset_key, cube_id)
         goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
 
-        for t in range(args.n_timesteps):
+        for t in range(n_timesteps):
 
             policy = eval_policy(actor_params, obs)
             value = eval_value(critic_params, obs)
@@ -303,13 +309,13 @@ def main(args):
             )
             obs = new_obs
 
-        SPS = (args.n_timesteps * args.num_envs) / (time.time() - start_t)
+        SPS = (n_timesteps * num_envs) / (time.time() - start_t)
 
-        rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, args.gamma_)
-        adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, args.gamma_, args.lambda_)
+        rew_to_go, mean_episode_rew = compute_rew_to_go(rew_buffer, gamma_)
+        adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, gamma_, lambda_)
         num_success, num_is_touching, num_is_grasped = compute_eval_metrics(success_buffer, is_touching_buffer, is_grasped_buffer)
 
-        if i % args.checkpoint_freq == 0 and i >= 10: 
+        if i % checkpoint_freq == 0 and i >= 10: 
                 
             obs_arr = np.asarray(obs_buffer[0:4], dtype=np.uint8)
             for index in range(int(obs_arr.shape[0])):
@@ -359,22 +365,13 @@ def main(args):
                     log_prob_buffer, 
                     adv_estimates, 
                     rew_to_go, 
-                    image_res, 
+                    image_res_tuple, 
                     total_samples
                 )
-        '''
-        obs_buffer, act_buffer, log_prob_buffer, adv_estimates, rew_to_go, main_rng_key = shuffle_buffers(
-                    obs_buffer,
-                    act_buffer,
-                    log_prob_buffer,
-                    adv_estimates,
-                    rew_to_go,
-                    main_rng_key
-                )
-        '''
+
         mean_actor_loss, mean_critic_loss = 0.0, 0.0
         
-        for n in range(args.n_mini_batches):
+        for n in range(n_mini_batches):
 
             max_idx, min_idx = ((n+1) * batch_size), (n * batch_size)
 
@@ -398,14 +395,14 @@ def main(args):
                 sampled_batch_log_prob,
                 sampled_batch_adv,
                 sampled_batch_rew_to_go,
-                args.eps,
-                args.ent_coef,
+                eps,
+                ent_coef,
             )
             mean_actor_loss += actor_loss
             mean_critic_loss += critic_loss
 
-        mean_actor_loss /= args.n_mini_batches
-        mean_critic_loss /= args.n_mini_batches
+        mean_actor_loss /= n_mini_batches
+        mean_critic_loss /= n_mini_batches
 
         wandb.log({
             "train/actor_loss": mean_actor_loss,
@@ -438,7 +435,7 @@ if __name__ == "__main__":
     parser.add_argument("--gamma_", type=float, default=0.95)
     parser.add_argument("--num_epochs", type=int, default=1500)
     parser.add_argument("--ppo_epochs", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--checkpoint_freq", type=int, default=10)
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)
@@ -449,6 +446,20 @@ if __name__ == "__main__":
 
     if len(jax.devices("cuda")) > 0:
         print("CUDA-capable device available...")
-        main(args)
+        main(
+            num_envs=args.num_envs,
+            eps=args.eps,
+            ent_coef=args.ent_coef,
+            lambda_=args.lambda_,
+            gamma_=args.gamma_,
+            num_epochs=args.num_epochs,
+            ppo_epochs=args.ppo_epochs,
+            lr=args.lr,
+            checkpoint_freq=args.checkpoint_freq,
+            image_res=args.image_res,
+            n_timesteps=args.n_timesteps,
+            seed=args.seed,
+            n_mini_batches=args.n_mini_batches,
+        )
     else:
         print("No CUDA-capable device available.")
