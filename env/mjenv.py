@@ -115,9 +115,9 @@ def compute_rew(
     wrist_flex = ctrl[..., -3]
 
     reach_rew = 1 - jnp.tanh(3 * dist_ee_cube)
-    place_rew = 1 - jnp.tanh(10 * dist_cube_goal)
+    place_rew = 1 - jnp.tanh(15 * dist_cube_goal)
     reach_close = jnp.exp(-15 * dist_ee_cube)
-    gripper_closed = jnp.maximum(0, 1 - (jnp.abs(gripper_cmd-0.15)/0.06))
+    gripper_closed = jnp.maximum(0, 1 - (jnp.abs(gripper_cmd-0.027)/0.01))
     reach_close_and_grasp = reach_close * gripper_closed
     is_gripping = (gripper_closed > 0.5) & (dist_ee_cube < 0.013)
     gated_place = is_gripping * place_rew
