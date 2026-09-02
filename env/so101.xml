@@ -12,7 +12,7 @@
   -->
   <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="10" ls_iterations="20" impratio="10"/>
 
-  <compiler angle="radian" meshdir="/home/ishan-agrawal/robotics/mjsim2real/env/assets" autolimits="true"/>
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
 
   <visual>
     <scale contactwidth="0.1" contactheight="0.05" forcewidth="0.02" framelength="0.75" framewidth="0.025"
