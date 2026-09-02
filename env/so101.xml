@@ -10,7 +10,7 @@
       optical axis instead. See PROVENANCE.md.
     See PROVENANCE.md.
   -->
-  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="10" ls_iterations="20" impratio="10"/>
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="30" ls_iterations="30" impratio="10"/>
 
   <compiler angle="radian" meshdir="assets" autolimits="true"/>
 
