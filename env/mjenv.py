@@ -60,23 +60,28 @@ def get_free_body_qpos_adr(mj_model, body_id):
 @partial(jax.jit, static_argnames=["batch_size", "cube_qpos_adr", "pos_range", "qpos_noise_scale"])
 def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale):
     k_cube, k_arm = jax.random.split(rng_key)
-    
-    # 1. Randomize standard robot joint positions with zero-mean noise
+
+    # 1. Generate noise for robot joints only
     arm_noise = jax.random.uniform(
         k_arm, base_qpos.shape, minval=-qpos_noise_scale, maxval=qpos_noise_scale
     )
-    qpos = base_qpos + arm_noise
+    
+    # Mask out the free cube joint (7 indices: 3 pos + 4 quat) from robot joint noise
+    mask = jnp.ones(base_qpos.shape[-1], dtype=jnp.float32)
+    mask = mask.at[cube_qpos_adr : cube_qpos_adr + 7].set(0.0)
+    
+    qpos = base_qpos + (arm_noise * mask)
 
-    # 2. Add distinct XY displacement specifically for the free cube joint
+    # 2. Add controlled XY offset specifically to the cube
     cube_xy_noise = jax.random.uniform(
         k_cube, (batch_size, 2), minval=-pos_range, maxval=pos_range
     )
-    qpos = qpos.at[:, cube_qpos_adr:cube_qpos_adr + 2].add(cube_xy_noise)
+    qpos = qpos.at[:, cube_qpos_adr : cube_qpos_adr + 2].add(cube_xy_noise)
     
     return qpos
 
 
-def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05, qpos_noise_scale=0.02):
+def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05, qpos_noise_scale=0.2):
     batch_size = mjw_data.qpos.shape[0]
     init_qpos = jnp.tile(wp.to_jax(mjw_model.qpos0), (batch_size, 1))
     init_qvel = jnp.zeros_like(wp.to_jax(mjw_data.qvel))
@@ -169,7 +174,7 @@ def compute_rew(
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
     ctrl_wp = wp.from_jax(ctrl)
-    prev_ctrl = wp.to_jax(prev_ctrl)
+    prev_ctrl = wp.to_jax(prev_ctrl) if not isinstance(prev_ctrl, jax.Array) else prev_ctrl
     wp.copy(mjw_data.ctrl, ctrl_wp)
     for _ in range(n_frames):
         mjw.step(mjw_model, mjw_data)
@@ -191,7 +196,6 @@ if __name__ == '__main__':
     cube_id = get_cube_id(mj_model)
     ee_id = get_gripper_id(mj_model)
 
-    # Calling reset with custom position and joint angle noise scales
     reset_batch(
         mj_model, 
         mjw_model, 
