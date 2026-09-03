@@ -7,6 +7,7 @@ import mujoco_warp as mjw
 import warp as wp
 from functools import partial
 
+
 def init_mujoco(num_envs):
     scene_dir_name = "scene.xml"
     curr_dir_name = os.path.dirname(os.path.abspath(__file__))
@@ -35,7 +36,7 @@ def render_batch(mjw_model, mjw_data, render_ctx, render_buff):
     mjw.refit_bvh(mjw_model, mjw_data, render_ctx)
     mjw.render(mjw_model, mjw_data, render_ctx)
     mjw.get_rgb(render_ctx, camera_index=0, rgb_out=render_buff)
-    jax_rgb_buff = jnp.array(255*jnp.from_dlpack(render_buff), dtype=jnp.float32)
+    jax_rgb_buff = jnp.array(255 * jnp.from_dlpack(render_buff), dtype=jnp.float32)
     return jax_rgb_buff
 
 
@@ -48,7 +49,6 @@ def get_gripper_id(mj_model):
 
 
 def get_free_body_qpos_adr(mj_model, body_id):
-
     jnt_adr = mj_model.body_jntadr[body_id]
     assert jnt_adr >= 0, "body has no joint (is it welded to the world?)"
     assert mj_model.jnt_type[jnt_adr] == mujoco.mjtJoint.mjJNT_FREE, (
@@ -57,25 +57,37 @@ def get_free_body_qpos_adr(mj_model, body_id):
     return int(mj_model.jnt_qposadr[jnt_adr])
 
 
-@partial(jax.jit, static_argnames=["batch_size", "cube_qpos_adr", "pos_range"])
-def _randomize_cube_xy(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range):
-    xy_noise = jax.random.uniform(
-        rng_key, (batch_size, 2), minval=-pos_range, maxval=pos_range
+@partial(jax.jit, static_argnames=["batch_size", "cube_qpos_adr", "pos_range", "qpos_noise_scale"])
+def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale):
+    k_cube, k_arm = jax.random.split(rng_key)
+    
+    # 1. Randomize standard robot joint positions with zero-mean noise
+    arm_noise = jax.random.uniform(
+        k_arm, base_qpos.shape, minval=-qpos_noise_scale, maxval=qpos_noise_scale
     )
-    return base_qpos.at[:, cube_qpos_adr:cube_qpos_adr + 2].add(xy_noise)
+    qpos = base_qpos + arm_noise
+
+    # 2. Add distinct XY displacement specifically for the free cube joint
+    cube_xy_noise = jax.random.uniform(
+        k_cube, (batch_size, 2), minval=-pos_range, maxval=pos_range
+    )
+    qpos = qpos.at[:, cube_qpos_adr:cube_qpos_adr + 2].add(cube_xy_noise)
+    
+    return qpos
 
 
-def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05):
+def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05, qpos_noise_scale=0.02):
     batch_size = mjw_data.qpos.shape[0]
     init_qpos = jnp.tile(wp.to_jax(mjw_model.qpos0), (batch_size, 1))
     init_qvel = jnp.zeros_like(wp.to_jax(mjw_data.qvel))
 
     cube_qpos_adr = get_free_body_qpos_adr(mj_model, cube_id)
-    init_qpos = _randomize_cube_xy(
-        rng_key, init_qpos, batch_size, cube_qpos_adr, pos_range
+    
+    randomized_qpos = _randomize_qpos(
+        rng_key, init_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale
     )
 
-    wp.copy(mjw_data.qpos, wp.from_jax(init_qpos))
+    wp.copy(mjw_data.qpos, wp.from_jax(randomized_qpos))
     wp.copy(mjw_data.qvel, wp.from_jax(init_qvel))
     mjw.forward(mjw_model, mjw_data)
 
@@ -93,11 +105,12 @@ def set_new_height(jax_cube_pos, goal_height):
 
 
 def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
-   
     cube_id = get_cube_id(mj_model)
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
+
+
 @partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
@@ -107,9 +120,7 @@ def compute_rew(
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
 ):
-    # 1. Approach target: hover 2.0 cm above the cube's top surface (0.0125 + 0.02 = 0.0325m)
     current_cube_pos_raised = current_cube_pos.at[..., 2].add(0.02)
-    
     dist_ee_cube_raised = jnp.linalg.norm(current_ee_pos - current_cube_pos_raised, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
     dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
@@ -118,19 +129,13 @@ def compute_rew(
     arm_ctrl = ctrl[..., :-1]
     prev_arm_ctrl = prev_ctrl[..., :-1]
 
-    # 2. Strict Floor Margin: Table surface is z=0, cube top is z=0.025.
-    # EE should stay above z = 0.012m to avoid smashing into the floor.
     ee_z = current_ee_pos[..., 2]
     floor_safety_height = 0.012
     table_penalty = jnp.maximum(0.0, floor_safety_height - ee_z) / floor_safety_height
-
-    # 3. Valid Grasp Height: EE must be near cube height (z > 0.010m) but not smashed into ground
     valid_height = (ee_z > 0.010).astype(jnp.float32)
 
-    # 4. Reward Calculations
     reach_rew = 1.0 - jnp.tanh(3.0 * dist_ee_cube_raised)
     reach_close = jnp.exp(-20.0 * dist_ee_cube_raised)
-    
     gripper_closed = jnp.maximum(0.0, 1.0 - (jnp.abs(gripper_cmd - 0.095) / 0.04))
     reach_close_and_grasp = reach_close * gripper_closed * valid_height
     
@@ -139,7 +144,6 @@ def compute_rew(
     gated_place = is_gripping * place_rew
     is_success = (dist_cube_goal < tolerance)
 
-    # 5. Action smoothness
     action_delta = jnp.sum(jnp.square(arm_ctrl - prev_arm_ctrl), axis=-1)
     action_penalty = 0.01 * action_delta
 
@@ -149,60 +153,8 @@ def compute_rew(
         + 1.5 * reach_close_and_grasp 
         + 3.0 * gated_place
         + 5.0 * is_success 
-        - 5.0 * table_penalty    # Strong penalty for dropping below z = 0.012m
+        - 5.0 * table_penalty
         - action_penalty
-    )
-
-    is_close = (dist_ee_cube < 0.02)
-
-    return (
-        total_reward,
-        is_close.astype(jnp.int8),
-        is_gripping.astype(jnp.int8),
-        is_success.astype(jnp.int8),
-    )
-
-@partial(jax.jit, static_argnames=["tolerance"])
-def compute_rew_(
-    cube_goal_pos: jax.Array,
-    current_cube_pos: jax.Array,
-    current_ee_pos: jax.Array,
-    ctrl: jax.Array,
-    prev_ctrl: jax.Array,
-    tolerance: float = 0.02,
-):
-    current_cube_pos_raised = current_cube_pos.at[..., 2].add(0.02)
-    dist_ee_cube_raised = jnp.linalg.norm(current_ee_pos - current_cube_pos_raised, axis=-1)
-    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
-    gripper_cmd = ctrl[..., -1]
-    arm_ctrl = ctrl[..., :-1]
-    wrist_flex = ctrl[..., -3]
-
-    prev_arm_ctrl = prev_ctrl[..., :-1]
-    not_too_low = jnp.bitwise_invert(current_ee_pos[..., 2] < 0.0125).astype(jnp.float32)
-    touched_grnd = current_ee_pos[..., 2] < 0.005
-
-    wrist_flex_down = 1 - jnp.abs((wrist_flex - 0.9)/0.2)
-    reach_rew = 1 - jnp.tanh(3 * dist_ee_cube_raised)
-    #reach_rew = reach_rew * (0.5 + wrist_flex_down) 
-    place_rew = 1 - jnp.tanh(15 * dist_cube_goal)
-    reach_close = jnp.exp(-50 * dist_ee_cube_raised)
-    gripper_closed = jnp.maximum(0, 1 - (jnp.abs(gripper_cmd-0.095)/0.04))
-    reach_close_and_grasp = reach_close * gripper_closed * not_too_low
-    is_gripping = ((gripper_closed > 0.5) & (dist_ee_cube < 0.015)) * not_too_low
-    gated_place = is_gripping * place_rew
-    is_success = (dist_cube_goal < tolerance)
-    #action_penalty = 0.005 * jnp.sum(jnp.square(((arm_ctrl-prev_arm_ctrl)/0.25)), axis=-1)
-
-    total_reward = (
-            reach_rew
-        + 2 * reach_close
-        + 2 * reach_close_and_grasp 
-        + 3 * gated_place
-        + 5 * is_success 
-        -10 * touched_grnd 
-        #- action_penalty
     )
 
     is_close = (dist_ee_cube < 0.02)
@@ -216,13 +168,6 @@ def compute_rew_(
 
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
-    '''current_ctrl = wp.to_jax(mjw_data.ctrl)
-    current_arm_ctrl = current_ctrl[..., :-1]
-    command_arm_ctrl = ctrl[..., :-1]
-    command_gripper_ctrl = ctrl[..., -1]
-    ctrl_clamped = current_arm_ctrl + jnp.clip(command_arm_ctrl - current_arm_ctrl, -0.01, 0.01)
-    ctrl_clamped = jnp.concatenate([ctrl_clamped, command_gripper_ctrl], axis=-1)
-    ctrl_wp = wp.from_jax(ctrl_clamped)'''
     ctrl_wp = wp.from_jax(ctrl)
     prev_ctrl = wp.to_jax(prev_ctrl)
     wp.copy(mjw_data.ctrl, ctrl_wp)
@@ -245,16 +190,28 @@ if __name__ == '__main__':
 
     cube_id = get_cube_id(mj_model)
     ee_id = get_gripper_id(mj_model)
-    reset_batch(mj_model, mjw_model, mjw_data, k2, cube_id, pos_range=0.05)
+
+    # Calling reset with custom position and joint angle noise scales
+    reset_batch(
+        mj_model, 
+        mjw_model, 
+        mjw_data, 
+        k2, 
+        cube_id, 
+        pos_range=0.05, 
+        qpos_noise_scale=0.03
+    )
     goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
 
     frames = []
+    prev_ctrl = wp.to_jax(mjw_data.ctrl)
+
     for i in range(100):
         k3, base_key = jax.random.split(base_key)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
-        rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos)
-        print(rew)
+        rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos, prev_ctrl)
+        prev_ctrl = action
         frames.append(np.asarray(obs[0], dtype=np.uint8))
 
     media.write_video(path="vid.mp4", images=frames)
