@@ -15,7 +15,7 @@ def init_mujoco(num_envs):
     print(f"Loading MJCF: {scene_path}")
     mj_model = mujoco.MjModel.from_xml_path(scene_path)
     mjw_model = mjw.put_model(mj_model)
-    mjw_data = mjw.make_data(mj_model, nworld=num_envs, njmax=200)
+    mjw_data = mjw.make_data(mj_model, nworld=num_envs, njmax=350)
     return mj_model, mjw_model, mjw_data
 
 
@@ -98,38 +98,111 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
-
 @partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
     current_cube_pos: jax.Array,
     current_ee_pos: jax.Array,
     ctrl: jax.Array,
+    prev_ctrl: jax.Array,
     tolerance: float = 0.02,
 ):
-    dist_ee_cube = jnp.linalg.norm(current_cube_pos - current_ee_pos, axis=-1)
+    # 1. Approach target: hover 2.0 cm above the cube's top surface (0.0125 + 0.02 = 0.0325m)
+    current_cube_pos_raised = current_cube_pos.at[..., 2].add(0.02)
+    
+    dist_ee_cube_raised = jnp.linalg.norm(current_ee_pos - current_cube_pos_raised, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
+    dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
 
+    gripper_cmd = ctrl[..., -1]
+    arm_ctrl = ctrl[..., :-1]
+    prev_arm_ctrl = prev_ctrl[..., :-1]
+
+    # 2. Strict Floor Margin: Table surface is z=0, cube top is z=0.025.
+    # EE should stay above z = 0.012m to avoid smashing into the floor.
+    ee_z = current_ee_pos[..., 2]
+    floor_safety_height = 0.012
+    table_penalty = jnp.maximum(0.0, floor_safety_height - ee_z) / floor_safety_height
+
+    # 3. Valid Grasp Height: EE must be near cube height (z > 0.010m) but not smashed into ground
+    valid_height = (ee_z > 0.010).astype(jnp.float32)
+
+    # 4. Reward Calculations
+    reach_rew = 1.0 - jnp.tanh(3.0 * dist_ee_cube_raised)
+    reach_close = jnp.exp(-20.0 * dist_ee_cube_raised)
+    
+    gripper_closed = jnp.maximum(0.0, 1.0 - (jnp.abs(gripper_cmd - 0.095) / 0.04))
+    reach_close_and_grasp = reach_close * gripper_closed * valid_height
+    
+    is_gripping = ((gripper_closed > 0.5) & (dist_ee_cube < 0.015)) * valid_height
+    place_rew = 1.0 - jnp.tanh(15.0 * dist_cube_goal)
+    gated_place = is_gripping * place_rew
+    is_success = (dist_cube_goal < tolerance)
+
+    # 5. Action smoothness
+    action_delta = jnp.sum(jnp.square(arm_ctrl - prev_arm_ctrl), axis=-1)
+    action_penalty = 0.01 * action_delta
+
+    total_reward = (
+        reach_rew
+        + 1.0 * reach_close
+        + 1.5 * reach_close_and_grasp 
+        + 3.0 * gated_place
+        + 5.0 * is_success 
+        - 5.0 * table_penalty    # Strong penalty for dropping below z = 0.012m
+        - action_penalty
+    )
+
+    is_close = (dist_ee_cube < 0.02)
+
+    return (
+        total_reward,
+        is_close.astype(jnp.int8),
+        is_gripping.astype(jnp.int8),
+        is_success.astype(jnp.int8),
+    )
+
+@partial(jax.jit, static_argnames=["tolerance"])
+def compute_rew_(
+    cube_goal_pos: jax.Array,
+    current_cube_pos: jax.Array,
+    current_ee_pos: jax.Array,
+    ctrl: jax.Array,
+    prev_ctrl: jax.Array,
+    tolerance: float = 0.02,
+):
+    current_cube_pos_raised = current_cube_pos.at[..., 2].add(0.02)
+    dist_ee_cube_raised = jnp.linalg.norm(current_ee_pos - current_cube_pos_raised, axis=-1)
+    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
+    dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     gripper_cmd = ctrl[..., -1]
     arm_ctrl = ctrl[..., :-1]
     wrist_flex = ctrl[..., -3]
 
-    reach_rew = 1 - jnp.tanh(3 * dist_ee_cube)
+    prev_arm_ctrl = prev_ctrl[..., :-1]
+    not_too_low = jnp.bitwise_invert(current_ee_pos[..., 2] < 0.0125).astype(jnp.float32)
+    touched_grnd = current_ee_pos[..., 2] < 0.005
+
+    wrist_flex_down = 1 - jnp.abs((wrist_flex - 0.9)/0.2)
+    reach_rew = 1 - jnp.tanh(3 * dist_ee_cube_raised)
+    #reach_rew = reach_rew * (0.5 + wrist_flex_down) 
     place_rew = 1 - jnp.tanh(15 * dist_cube_goal)
-    reach_close = jnp.exp(-15 * dist_ee_cube)
-    gripper_closed = jnp.maximum(0, 1 - (jnp.abs(gripper_cmd-0.13)/0.06))
-    reach_close_and_grasp = reach_close * gripper_closed
-    is_gripping = (gripper_closed > 0.5) & (dist_ee_cube < 0.013)
+    reach_close = jnp.exp(-50 * dist_ee_cube_raised)
+    gripper_closed = jnp.maximum(0, 1 - (jnp.abs(gripper_cmd-0.095)/0.04))
+    reach_close_and_grasp = reach_close * gripper_closed * not_too_low
+    is_gripping = ((gripper_closed > 0.5) & (dist_ee_cube < 0.015)) * not_too_low
     gated_place = is_gripping * place_rew
     is_success = (dist_cube_goal < tolerance)
-    action_penalty = 0.0005 * jnp.sum(jnp.square(arm_ctrl), axis=-1)
+    #action_penalty = 0.005 * jnp.sum(jnp.square(((arm_ctrl-prev_arm_ctrl)/0.25)), axis=-1)
 
     total_reward = (
             reach_rew
         + 2 * reach_close
-        + 2 * reach_close_and_grasp
+        + 2 * reach_close_and_grasp 
         + 3 * gated_place
         + 5 * is_success 
+        -10 * touched_grnd 
+        #- action_penalty
     )
 
     is_close = (dist_ee_cube < 0.02)
@@ -142,13 +215,22 @@ def compute_rew(
     )
 
 
-def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, n_frames=3):
-    wp.copy(mjw_data.ctrl, wp.from_jax(ctrl))
+def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
+    '''current_ctrl = wp.to_jax(mjw_data.ctrl)
+    current_arm_ctrl = current_ctrl[..., :-1]
+    command_arm_ctrl = ctrl[..., :-1]
+    command_gripper_ctrl = ctrl[..., -1]
+    ctrl_clamped = current_arm_ctrl + jnp.clip(command_arm_ctrl - current_arm_ctrl, -0.01, 0.01)
+    ctrl_clamped = jnp.concatenate([ctrl_clamped, command_gripper_ctrl], axis=-1)
+    ctrl_wp = wp.from_jax(ctrl_clamped)'''
+    ctrl_wp = wp.from_jax(ctrl)
+    prev_ctrl = wp.to_jax(prev_ctrl)
+    wp.copy(mjw_data.ctrl, ctrl_wp)
     for _ in range(n_frames):
         mjw.step(mjw_model, mjw_data)
     current_ee_pos = wp.to_jax(mjw_data.site_xpos)[:, gripper_id]
     current_cube_pos = wp.to_jax(mjw_data.xpos)[:, cube_id]
-    reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, ctrl)
+    reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, ctrl, prev_ctrl)
     return reward
 
 

@@ -4,6 +4,7 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = ".99"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import argparse
+import warp as wp
 from pathlib import Path
 from functools import partial
 import time
@@ -31,7 +32,6 @@ from rl.ppo_rgb import (
     ActorNetwork,
     CriticConfig,
     CriticNetwork,
-    compute_adv_estimates,
     compute_advantage_estimates,
     compute_rew_to_go,
     compute_eval_metrics
@@ -243,7 +243,7 @@ def main(
         optax.adam(learning_rate=lr, eps=1e-5),
     ) 
     critic_optim = optax.chain(
-        optax.clip_by_global_norm(0.5),
+    #    optax.clip_by_global_norm(0.5),
         optax.adam(learning_rate=lr, eps=1e-5),
     )
 
@@ -283,10 +283,11 @@ def main(
 
         for t in range(n_timesteps):
 
+            prev_ctrl = wp.clone(mjw_data.ctrl)    
             policy = eval_policy(actor_params, obs)
             value = eval_value(critic_params, obs)
             actions, log_prob = policy.sample_and_log_prob(seed=timestep_keys[t])
-            rew, is_touching, is_grasped, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos)
+            rew, is_touching, is_grasped, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos, prev_ctrl)
             new_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
             obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, success_buffer, is_touching_buffer, is_grasped_buffer = update_buffers(
                     obs_buffer,
@@ -315,7 +316,7 @@ def main(
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, gamma_, lambda_)
         num_success, num_is_touching, num_is_grasped = compute_eval_metrics(success_buffer, is_touching_buffer, is_grasped_buffer)
 
-        if i % checkpoint_freq == 0 and i >= 10: 
+        if i % checkpoint_freq == 0 and i >= 0: 
                 
             obs_arr = np.asarray(obs_buffer[0:4], dtype=np.uint8)
             for index in range(int(obs_arr.shape[0])):
@@ -428,7 +429,7 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_envs", type=int, default=64)
+    parser.add_argument("--num_envs", type=int, default=96)
     parser.add_argument("--eps", type=float, default=0.1)
     parser.add_argument("--ent_coef", type=float, default=0.01)
     parser.add_argument("--lambda_", type=float, default=0.95)

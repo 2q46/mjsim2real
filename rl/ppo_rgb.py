@@ -61,7 +61,7 @@ class ActorNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.tanh(x)
         x = nn.Dense(self.cfg.output_features, dtype=dtype)(x)
-        x = nn.tanh(x)
+        x = 1.5 * nn.tanh(x)
         return MultivariateNormalDiag(x, jnp.exp(log_std))
 
 class CriticNetwork(nn.Module):
