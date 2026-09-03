@@ -144,7 +144,7 @@ def compute_rew(
 
     reach_rew = 1.0 - jnp.tanh(3.0 * dist_ee_cube_raised)
     reach_close = jnp.exp(-20.0 * dist_ee_cube_raised)
-    gripper_closed = jnp.maximum(0.0, 1.0 - (jnp.abs(gripper_cmd - 0.095) / 0.04))
+    gripper_closed = jnp.maximum(0.0, 1.0 - (jnp.abs(gripper_cmd - 0.115) / 0.04))
     reach_close_and_grasp = reach_close * gripper_closed * valid_height
     
     is_gripping = ((gripper_closed > 0.5) & (dist_ee_cube < 0.015)) * valid_height
