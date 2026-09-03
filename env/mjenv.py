@@ -130,6 +130,9 @@ def compute_rew(
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
     dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
 
+    cube_z = current_cube_pos[..., 2]
+    cube_height_gain = jnp.clip(cube_z - 0.0125, 0.0, 0.8) 
+
     gripper_cmd = ctrl[..., -1]
     arm_ctrl = ctrl[..., :-1]
     prev_arm_ctrl = prev_ctrl[..., :-1]
@@ -157,6 +160,7 @@ def compute_rew(
         + 1.0 * reach_close
         + 1.5 * reach_close_and_grasp 
         + 3.0 * gated_place
+        + 3.0 * cube_height_gain
         + 5.0 * is_success 
         - 5.0 * table_penalty
         - action_penalty

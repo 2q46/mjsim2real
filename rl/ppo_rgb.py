@@ -11,18 +11,18 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (32, 16, 16, 4, 1)
-    dense_features: Tuple[int, ...] = (128, 64, 32, 16)
+    features: Tuple[int, ...] = (24, 16, 16, 4, 1)
+    dense_features: Tuple[int, ...] = (128, 128, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
-    start_log_std: float = -0.5
+    start_log_std: float = -0.1
 
 
 @struct.dataclass
 class CriticConfig:
 
     img_size: int = 128
-    features: Tuple[int, ...] = (32, 16, 16, 4, 1)
+    features: Tuple[int, ...] = (24, 16, 16, 4, 1)
     dense_features: Tuple[int, ...] =(128, 64, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
@@ -38,7 +38,7 @@ class ActorNetwork(nn.Module):
         x = x.astype(dtype) / 255.0
         x = (x - 0.5) / 0.5
         log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
-        x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[0], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
@@ -73,7 +73,7 @@ class CriticNetwork(nn.Module):
         dtype = jnp.float32
         x = x.astype(dtype) / 255.0
         x = (x - 0.5) / 0.5
-        x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
+        x = nn.Conv(features=self.cfg.features[0], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)

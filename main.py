@@ -49,7 +49,7 @@ def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advan
     surr2 = clipped_ratio * advantage_func
     entropy = policy.entropy().mean()
     policy_loss = -jnp.minimum(surr1, surr2).mean() 
-    total_loss = policy_loss - entropy * 0.02
+    total_loss = policy_loss - entropy * 0.04
     return total_loss
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
