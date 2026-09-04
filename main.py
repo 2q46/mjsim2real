@@ -37,7 +37,7 @@ from rl.ppo_rgb import (
     compute_eval_metrics
 )
 
-def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05, ent_coef=0.01):
+def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.1, ent_coef=0.01):
     policy = apply_fn(params, obs_float)
     new_log_prob = policy.log_prob(actions)
     old_log_prob = jnp.reshape(old_log_prob, new_log_prob.shape)
@@ -460,7 +460,7 @@ if __name__ == "__main__":
     parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=1500)
     parser.add_argument("--ppo_epochs", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--checkpoint_freq", type=int, default=10)
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)

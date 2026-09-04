@@ -138,9 +138,9 @@ def compute_rew(
     wrist_flex = ctrl[..., -3]
 
     GRIPPER_CLOSE_NORMALISED = -0.65
-    GRIPPER_OPEN_NORMALISED = -0.2
+    GRIPPER_OPEN_NORMALISED = -0.1
 
-    wrist_flex_down = jnp.maximum(0, 1 - jnp.abs(wrist_flex - 0.7) / 0.2)
+    wrist_flex_down = jnp.maximum(0, 1 - jnp.abs(wrist_flex - 0.8) / 0.2)
     reach_rew = 1.0 - jnp.tanh(25.0 * dist_ee_cube)
     place_rew = 1.0 - jnp.tanh(25.0 * dist_cube_goal)
 
@@ -185,7 +185,7 @@ def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, pr
     current_ee_pos = wp.to_jax(mjw_data.site_xpos)[:, gripper_id]
     current_cube_pos = wp.to_jax(mjw_data.xpos)[:, cube_id]
     
-    reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, ctrl, prev_ctrl)
+    reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, scaled_ctrl, prev_ctrl)
     return reward
 
 
