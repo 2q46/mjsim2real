@@ -161,7 +161,7 @@ def compute_rew(
 
     total_reward = (
         1.5 * reach_rew
-        + 1.5 * wrist_flex
+        + 1.5 * wrist_flex_down
         + 3.0 * gated_place_reward
         + 2.0 * lift_reward
         + 1.0 * gripper_rew
