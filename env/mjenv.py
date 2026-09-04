@@ -100,17 +100,15 @@ def sample_action(mjw_data, rng_key):
     ctrl = ctrl.at[..., -1].set(0.1)  # Matches working grasp threshold
     return ctrl
 
-
 @partial(jax.jit)
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
-    """Scales normalized [-1, 1] actions to physical actuator limits."""
-    arm_ctrl = ctrl[..., :-1]
     
-    # Scale normalized [-1, 1] gripper command to joint limits [-0.1745, 1.7453]
-    gripper_normalized = (ctrl[..., -1:] + 1.0) / 2.0  # [0, 1]
-    gripper_scaled = -0.17453 + gripper_normalized * (1.74533 - (-0.17453))
+    ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
+    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  1.74533])
     
-    return jnp.concatenate([arm_ctrl, gripper_scaled], axis=-1)
+    normalized_ctrl = (ctrl + 1.0) / 2.0
+    
+    return ctrl_min + normalized_ctrl * (ctrl_max - ctrl_min)
 
 
 @partial(jax.jit, static_argnames=["goal_height"])
@@ -124,7 +122,6 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
 
-
 @partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
@@ -136,54 +133,43 @@ def compute_rew(
 ):
     dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-
-    reach_rew = jnp.exp(-15.0 * dist_ee_cube)
-
+    action_delta = jnp.linalg.norm(ctrl - prev_ctrl, axis=-1)
     gripper_cmd = ctrl[..., -1]
-    is_gripper_closed = gripper_cmd >= 0.05
 
-    is_close = dist_ee_cube < 0.03
-    is_gripping = is_close & is_gripper_closed
-    grasp_rew = is_gripping.astype(jnp.float32) * 1.0
+    GRIPPER_CLOSE_NORMALISED = -0.7
+    GRIPPER_OPEN_NORMALISED = 0.5
 
-    rest_height = 0.0125
-    cube_height_lift = jnp.maximum(0.0, current_cube_pos[..., 2] - rest_height)
-    lift_rew = jnp.clip(cube_height_lift / 0.1, 0.0, 1.0) * 2.0
+    reach_rew = 1.0 - jnp.tanh(10.0 * dist_ee_cube)
+    place_rew = 1.0 - jnp.tanh(10.0 * dist_cube_goal)
 
-    place_rew = jnp.exp(-10.0 * dist_cube_goal)
-    gated_place = is_gripping.astype(jnp.float32) * place_rew * 3.0
+    in_grasp_range = 1.0 - jnp.tanh(50.0 * dist_ee_cube)
 
-    is_success = dist_cube_goal < tolerance
-    success_rew = is_success.astype(jnp.float32) * 10.0
+    open_target_rew = 1.0 - jnp.abs(gripper_cmd - GRIPPER_OPEN_NORMALISED) / 2.0
+    close_target_rew = 1.0 - jnp.abs(gripper_cmd - GRIPPER_CLOSE_NORMALISED) / 2.0
 
-    arm_ctrl = ctrl[..., :-1]
-    prev_arm_ctrl = prev_ctrl[..., :-1]
-    action_delta = jnp.sum(jnp.square(arm_ctrl - prev_arm_ctrl), axis=-1)
-    action_penalty = 0.005 * action_delta
+    gripper_rew = (1.0 - in_grasp_range) * open_target_rew + in_grasp_range * close_target_rew
+
+    gated_place_reward = reach_rew * place_rew
+    success_bonus = (dist_cube_goal < tolerance).astype(jnp.float32)
+    is_close = (dist_ee_cube < 0.01).astype(jnp.float32)
+    is_gripped = ((dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
 
     total_reward = (
-        reach_rew
-        + grasp_rew
-        + lift_rew
-        + gated_place
-        + success_rew
-        - action_penalty
+        1.0 * reach_rew
+        + 3.0 * gated_place_reward
+        + 1.0 * gripper_rew
+        + 10.0 * success_bonus
+        - 0.01 * action_delta  
     )
 
-    return (
-        total_reward,
-        is_close.astype(jnp.int8),
-        is_gripping.astype(jnp.int8),
-        is_success.astype(jnp.int8),
-    )
+    return total_reward, is_close, is_gripped, success_bonus
 
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
-    # Scale action before stepping MuJoCo simulation
+
     scaled_ctrl = scale_action_to_actuators(ctrl)
     ctrl_wp = wp.from_jax(scaled_ctrl)
-    
-    prev_ctrl = wp.to_jax(prev_ctrl) if not isinstance(prev_ctrl, jax.Array) else prev_ctrl
+    prev_ctrl = wp.to_jax(prev_ctrl) 
     wp.copy(mjw_data.ctrl, ctrl_wp)
     
     for _ in range(n_frames):

@@ -345,7 +345,6 @@ def main(
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, gamma_, lambda_)
         num_success, num_is_touching, num_is_grasped = compute_eval_metrics(success_buffer, is_touching_buffer, is_grasped_buffer)
 
-        # Synchronous Checkpoint and Video Logging in Main Thread
         if i % checkpoint_freq == 0 and i >= 0: 
             obs_arr = np.asarray(obs_buffer[0:4], dtype=np.uint8)
             grasped_non_zero = jnp.any(is_grasped_buffer, axis=1).nonzero()[0]
@@ -380,7 +379,6 @@ def main(
 
         mean_actor_loss, mean_critic_loss = 0.0, 0.0
         
-        # PPO Inner Loop
         for ppo_epoch in range(ppo_epochs):
             (
                 obs_buffer,
