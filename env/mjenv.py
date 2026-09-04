@@ -139,8 +139,8 @@ def compute_rew(
     GRIPPER_CLOSE_NORMALISED = -0.7
     GRIPPER_OPEN_NORMALISED = 0.5
 
-    reach_rew = 1.0 - jnp.tanh(10.0 * dist_ee_cube)
-    place_rew = 1.0 - jnp.tanh(10.0 * dist_cube_goal)
+    reach_rew = 1.0 - jnp.tanh(25.0 * dist_ee_cube)
+    place_rew = 1.0 - jnp.tanh(25.0 * dist_cube_goal)
 
     in_grasp_range = 1.0 - jnp.tanh(50.0 * dist_ee_cube)
 
