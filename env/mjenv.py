@@ -61,18 +61,15 @@ def get_free_body_qpos_adr(mj_model, body_id):
 def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale):
     k_cube, k_arm = jax.random.split(rng_key)
 
-    # 1. Generate noise for robot joints only
     arm_noise = jax.random.uniform(
         k_arm, base_qpos.shape, minval=-qpos_noise_scale, maxval=qpos_noise_scale
     )
     
-    # Mask out the free cube joint (7 indices: 3 pos + 4 quat) from robot joint noise
     mask = jnp.ones(base_qpos.shape[-1], dtype=jnp.float32)
     mask = mask.at[cube_qpos_adr : cube_qpos_adr + 7].set(0.0)
     
     qpos = base_qpos + (arm_noise * mask)
 
-    # 2. Add controlled XY offset specifically to the cube
     cube_xy_noise = jax.random.uniform(
         k_cube, (batch_size, 2), minval=-pos_range, maxval=pos_range
     )
@@ -100,8 +97,20 @@ def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05,
 def sample_action(mjw_data, rng_key):
     size = mjw_data.ctrl.shape
     ctrl = jax.random.uniform(rng_key, size, minval=-1.0, maxval=1.0)
-    ctrl = ctrl.at[..., -1].set(0.25)
+    ctrl = ctrl.at[..., -1].set(0.1)  # Matches working grasp threshold
     return ctrl
+
+
+@partial(jax.jit)
+def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
+    """Scales normalized [-1, 1] actions to physical actuator limits."""
+    arm_ctrl = ctrl[..., :-1]
+    
+    # Scale normalized [-1, 1] gripper command to joint limits [-0.1745, 1.7453]
+    gripper_normalized = (ctrl[..., -1:] + 1.0) / 2.0  # [0, 1]
+    gripper_scaled = -0.17453 + gripper_normalized * (1.74533 - (-0.17453))
+    
+    return jnp.concatenate([arm_ctrl, gripper_scaled], axis=-1)
 
 
 @partial(jax.jit, static_argnames=["goal_height"])
@@ -125,48 +134,41 @@ def compute_rew(
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
 ):
-    current_cube_pos_raised = current_cube_pos.at[..., 2].add(0.02)
-    dist_ee_cube_raised = jnp.linalg.norm(current_ee_pos - current_cube_pos_raised, axis=-1)
-    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
     dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
+    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
 
-    cube_z = current_cube_pos[..., 2]
-    cube_height_gain = jnp.clip(cube_z - 0.0125, 0.0, 0.8) 
+    reach_rew = jnp.exp(-15.0 * dist_ee_cube)
 
     gripper_cmd = ctrl[..., -1]
+    is_gripper_closed = gripper_cmd >= 0.05
+
+    is_close = dist_ee_cube < 0.03
+    is_gripping = is_close & is_gripper_closed
+    grasp_rew = is_gripping.astype(jnp.float32) * 1.0
+
+    rest_height = 0.0125
+    cube_height_lift = jnp.maximum(0.0, current_cube_pos[..., 2] - rest_height)
+    lift_rew = jnp.clip(cube_height_lift / 0.1, 0.0, 1.0) * 2.0
+
+    place_rew = jnp.exp(-10.0 * dist_cube_goal)
+    gated_place = is_gripping.astype(jnp.float32) * place_rew * 3.0
+
+    is_success = dist_cube_goal < tolerance
+    success_rew = is_success.astype(jnp.float32) * 10.0
+
     arm_ctrl = ctrl[..., :-1]
     prev_arm_ctrl = prev_ctrl[..., :-1]
-
-    ee_z = current_ee_pos[..., 2]
-    floor_safety_height = 0.012
-    table_penalty = jnp.maximum(0.0, floor_safety_height - ee_z) / floor_safety_height
-    valid_height = (ee_z > 0.010).astype(jnp.float32)
-
-    reach_rew = 1.0 - jnp.tanh(3.0 * dist_ee_cube_raised)
-    reach_close = jnp.exp(-20.0 * dist_ee_cube_raised)
-    gripper_closed = jnp.maximum(0.0, 1.0 - (jnp.abs(gripper_cmd - 0.115) / 0.04))
-    reach_close_and_grasp = reach_close * gripper_closed * valid_height
-    
-    is_gripping = ((gripper_closed > 0.5) & (dist_ee_cube < 0.015)) * valid_height
-    place_rew = 1.0 - jnp.tanh(15.0 * dist_cube_goal)
-    gated_place = is_gripping * place_rew
-    is_success = (dist_cube_goal < tolerance)
-
     action_delta = jnp.sum(jnp.square(arm_ctrl - prev_arm_ctrl), axis=-1)
-    action_penalty = 0.01 * action_delta
+    action_penalty = 0.005 * action_delta
 
     total_reward = (
         reach_rew
-        + 1.0 * reach_close
-        + 1.5 * reach_close_and_grasp 
-        + 3.0 * gated_place
-        + 3.0 * cube_height_gain
-        + 5.0 * is_success 
-        - 5.0 * table_penalty
+        + grasp_rew
+        + lift_rew
+        + gated_place
+        + success_rew
         - action_penalty
     )
-
-    is_close = (dist_ee_cube < 0.02)
 
     return (
         total_reward,
@@ -177,13 +179,19 @@ def compute_rew(
 
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
-    ctrl_wp = wp.from_jax(ctrl)
+    # Scale action before stepping MuJoCo simulation
+    scaled_ctrl = scale_action_to_actuators(ctrl)
+    ctrl_wp = wp.from_jax(scaled_ctrl)
+    
     prev_ctrl = wp.to_jax(prev_ctrl) if not isinstance(prev_ctrl, jax.Array) else prev_ctrl
     wp.copy(mjw_data.ctrl, ctrl_wp)
+    
     for _ in range(n_frames):
         mjw.step(mjw_model, mjw_data)
+        
     current_ee_pos = wp.to_jax(mjw_data.site_xpos)[:, gripper_id]
     current_cube_pos = wp.to_jax(mjw_data.xpos)[:, cube_id]
+    
     reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, ctrl, prev_ctrl)
     return reward
 

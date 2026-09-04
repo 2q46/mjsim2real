@@ -37,24 +37,34 @@ from rl.ppo_rgb import (
     compute_eval_metrics
 )
 
-def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05):
+def compute_actor_loss(params, apply_fn, actions, obs_float, old_log_prob, advantage_func, eps=0.05, ent_coef=0.01):
     policy = apply_fn(params, obs_float)
     new_log_prob = policy.log_prob(actions)
     old_log_prob = jnp.reshape(old_log_prob, new_log_prob.shape)
     advantage_func = jnp.reshape(advantage_func, new_log_prob.shape)
+    
     log_ratio = new_log_prob - old_log_prob
     ratio = jnp.exp(log_ratio)
+    
     clipped_ratio = jnp.clip(ratio, 1.0 - eps, 1.0 + eps)
     surr1 = ratio * advantage_func
     surr2 = clipped_ratio * advantage_func
-    #entropy = policy.entropy().mean()
-    policy_loss = -jnp.minimum(surr1, surr2).mean() 
-    total_loss = policy_loss #- entropy * 0.04
+    
+    policy_loss = -jnp.minimum(surr1, surr2).mean()
+    entropy = policy.entropy().mean()
+    
+    total_loss = policy_loss - (ent_coef * entropy)
     return total_loss
 
 def compute_critic_loss(params, apply_fn, obs_float, gt_rew_to_go):
     estimated_rew_to_go = apply_fn(params, obs_float)
-    loss = optax.huber_loss(estimated_rew_to_go, gt_rew_to_go).mean()
+    
+    target_mean = jnp.mean(gt_rew_to_go)
+    target_std = jnp.std(gt_rew_to_go) + 1e-8
+    norm_gt = (gt_rew_to_go - target_mean) / target_std
+    norm_pred = (estimated_rew_to_go - target_mean) / target_std
+    
+    loss = optax.huber_loss(norm_pred, norm_gt).mean()
     return loss
 
 @jax.jit
@@ -67,11 +77,13 @@ def shuffle_buffers(
     main_key
 ):
     shuffle_key, main_key = jax.random.split(main_key)
-    obs_buffer = jax.random.permutation(shuffle_key, obs_buffer)
-    act_buffer = jax.random.permutation(shuffle_key, act_buffer)
-    rew_to_go = jax.random.permutation(shuffle_key, rew_to_go)
-    adv_estimates = jax.random.permutation(shuffle_key, adv_estimates)
-    log_prob_buffer = jax.random.permutation(shuffle_key, log_prob_buffer)
+    perm = jax.random.permutation(shuffle_key, obs_buffer.shape[0])
+    
+    obs_buffer = obs_buffer[perm]
+    act_buffer = act_buffer[perm]
+    rew_to_go = rew_to_go[perm]
+    adv_estimates = adv_estimates[perm]
+    log_prob_buffer = log_prob_buffer[perm]
     return (
         obs_buffer,
         act_buffer,
@@ -100,7 +112,7 @@ def actor_critic_train_step(
     ent_coef,
 ):
     actor_loss, actor_grads = jax.value_and_grad(compute_actor_loss)(
-        actor_params, actor_apply_fn, batch_act, batch_obs, batch_log_prob, batch_adv, eps
+        actor_params, actor_apply_fn, batch_act, batch_obs, batch_log_prob, batch_adv, eps, ent_coef
     )
     actor_updates, new_actor_opt_state = actor_tx_update(actor_grads, actor_opt_state, actor_params)
     new_actor_params = optax.apply_updates(actor_params, actor_updates)
@@ -147,7 +159,6 @@ def update_buffers(
     is_success_buffer = is_success_buffer.at[:, t].set(is_success)
     is_touching_buffer = is_touching_buffer.at[:, t].set(is_touching)
     is_grasped_buffer = is_grasped_buffer.at[:, t].set(is_grasped)
-
     log_prob_buffer = log_prob_buffer.at[:, t].set(log_prob)
     return (
         obs_buffer,
@@ -172,13 +183,13 @@ def flatten_buffers(
     image_res,
     total_samples
 ):
-    rew_to_go = jnp.reshape(rew_to_go, (total_samples))
-    adv_estimates = jnp.reshape(adv_estimates, (total_samples))
-    val_buffer = jnp.reshape(val_buffer, (total_samples))
+    rew_to_go = jnp.reshape(rew_to_go, (total_samples,))
+    adv_estimates = jnp.reshape(adv_estimates, (total_samples,))
+    val_buffer = jnp.reshape(val_buffer, (total_samples,))
     obs_buffer = jnp.reshape(obs_buffer, (total_samples, *image_res, 3))
     act_buffer = jnp.reshape(act_buffer, (total_samples, 6))
-    rew_buffer = jnp.reshape(rew_buffer, (total_samples))
-    log_prob_buffer = jnp.reshape(log_prob_buffer, (total_samples))
+    rew_buffer = jnp.reshape(rew_buffer, (total_samples,))
+    log_prob_buffer = jnp.reshape(log_prob_buffer, (total_samples,))
     return (
         obs_buffer,
         act_buffer,
@@ -188,6 +199,24 @@ def flatten_buffers(
         adv_estimates,
         rew_to_go
     )
+
+def _save_video_and_checkpoints(epoch, obs_arr, grasped_arr, success_arr, actor_state, critic_state, checkpoint_dir):
+    Path("videos").mkdir(parents=True, exist_ok=True)
+    for index in range(int(obs_arr.shape[0])):
+        media.write_video(f"videos/epoch_{epoch}_{index}.mp4", obs_arr[index], fps=24)
+        
+    if grasped_arr is not None:
+        for index in range(int(grasped_arr.shape[0])):
+            media.write_video(f"videos/epoch_{epoch}_grasp_{index}.mp4", grasped_arr[index], fps=24)
+
+    if success_arr is not None:
+        for index in range(int(success_arr.shape[0])):
+            media.write_video(f"videos/epoch_{epoch}_success_{index}.mp4", success_arr[index], fps=24)
+
+    checkpointer = ocp.StandardCheckpointer()
+    checkpointer.save(checkpoint_dir / f"actor_{epoch}", actor_state)
+    checkpointer.save(checkpoint_dir / f"critic_{epoch}", critic_state)
+    checkpointer.wait_until_finished()
 
 def main(
     num_envs: int = 64,
@@ -209,16 +238,16 @@ def main(
         tags=["ppo"],
         config={
             "epochs": num_epochs, 
+            "ppo_epochs": ppo_epochs,
             "gamma": gamma_,
             "lambda": lambda_,
             "train_envs": num_envs,
             "image_res": image_res,
             "lr": lr,
-            "eps": eps
+            "eps": eps,
+            "ent_coef": ent_coef
         }
     )
-
-    checkpointer = ocp.StandardCheckpointer()
 
     image_res_tuple = tuple(image_res)
 
@@ -243,7 +272,7 @@ def main(
         optax.adam(learning_rate=lr, eps=1e-5),
     ) 
     critic_optim = optax.chain(
-    #    optax.clip_by_global_norm(0.5),
+        optax.clip_by_global_norm(0.5),
         optax.adam(learning_rate=lr, eps=1e-5),
     )
 
@@ -261,7 +290,7 @@ def main(
     for i in range(num_epochs):
 
         print("="*50)
-        epoch_num = i+1
+        epoch_num = i + 1
         print(f"Epoch number {epoch_num}")
         start_t = time.time()
 
@@ -316,94 +345,91 @@ def main(
         adv_estimates = compute_advantage_estimates(val_buffer, rew_buffer, gamma_, lambda_)
         num_success, num_is_touching, num_is_grasped = compute_eval_metrics(success_buffer, is_touching_buffer, is_grasped_buffer)
 
+        # Synchronous Checkpoint and Video Logging in Main Thread
         if i % checkpoint_freq == 0 and i >= 0: 
-                
             obs_arr = np.asarray(obs_buffer[0:4], dtype=np.uint8)
-            for index in range(int(obs_arr.shape[0])):
-                video_frames = np.ascontiguousarray(obs_arr[index])
-                media.write_video(f"videos/epoch_{i}_{index}.mp4", video_frames, fps=24)
-            checkpoint_dir = Path("checkpoints/").absolute()
-
             grasped_non_zero = jnp.any(is_grasped_buffer, axis=1).nonzero()[0]
             success_non_zero = jnp.any(success_buffer, axis=1).nonzero()[0]
 
-            if grasped_non_zero.shape[0] >= 2:
-                obs_arr = np.asarray(obs_buffer[grasped_non_zero[0:2]], dtype=np.uint8)
-                for index in range(int(obs_arr.shape[0])):
-                    video_frames = np.ascontiguousarray(obs_arr[index])
-                    media.write_video(f"videos/epoch_{i}_grasp_{index}.mp4", video_frames, fps=24)
-
-            if success_non_zero.shape[0] >= 2:
-                obs_arr = np.asarray(obs_buffer[success_non_zero[0:2]], dtype=np.uint8)
-                for index in range(int(obs_arr.shape[0])):
-                    video_frames = np.ascontiguousarray(obs_arr[index])
-                    media.write_video(f"videos/epoch_{i}_success_{index}.mp4", video_frames, fps=24)
+            grasped_arr = np.asarray(obs_buffer[grasped_non_zero[0:2]], dtype=np.uint8) if grasped_non_zero.shape[0] >= 2 else None
+            success_arr = np.asarray(obs_buffer[success_non_zero[0:2]], dtype=np.uint8) if success_non_zero.shape[0] >= 2 else None
 
             actor_state = TrainState(
-                        step=i,
-                        apply_fn=actor_network.apply,
-                        params=actor_params,
-                        tx=actor_optim,
-                        opt_state=actor_opt_state
+                step=i, apply_fn=actor_network.apply, params=actor_params, tx=actor_optim, opt_state=actor_opt_state
             )
             critic_state = TrainState(
-                        step=i,
-                        apply_fn=critic_network.apply,
-                        params=critic_params,
-                        tx=critic_optim,
-                        opt_state=critic_opt_state
+                step=i, apply_fn=critic_network.apply, params=critic_params, tx=critic_optim, opt_state=critic_opt_state
             )
-            checkpointer.save(checkpoint_dir / f"actor_{i}", actor_state)
-            checkpointer.wait_until_finished()
-            checkpointer.save(checkpoint_dir / f"critic_{i}", critic_state)
-            checkpointer.wait_until_finished()
+            checkpoint_dir = Path("checkpoints/").absolute()
+
+            _save_video_and_checkpoints(
+                i, obs_arr, grasped_arr, success_arr, actor_state, critic_state, checkpoint_dir
+            )
 
         obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, adv_estimates, rew_to_go = flatten_buffers(
-                    obs_buffer, 
-                    act_buffer, 
-                    rew_buffer, 
-                    val_buffer, 
-                    log_prob_buffer, 
-                    adv_estimates, 
-                    rew_to_go, 
-                    image_res_tuple, 
-                    total_samples
-                )
+            obs_buffer, 
+            act_buffer, 
+            rew_buffer, 
+            val_buffer, 
+            log_prob_buffer, 
+            adv_estimates, 
+            rew_to_go, 
+            image_res_tuple, 
+            total_samples
+        )
 
         mean_actor_loss, mean_critic_loss = 0.0, 0.0
         
-        for n in range(n_mini_batches):
-
-            max_idx, min_idx = ((n+1) * batch_size), (n * batch_size)
-
-            sampled_obs_buff = obs_buffer[min_idx: max_idx]
-            sampled_batch_act = act_buffer[min_idx: max_idx]
-            sampled_batch_log_prob = log_prob_buffer[min_idx: max_idx]
-            sampled_batch_adv = adv_estimates[min_idx: max_idx]
-            sampled_batch_rew_to_go = rew_to_go[min_idx: max_idx]
-
-            actor_params, critic_params, actor_opt_state, critic_opt_state, actor_loss, critic_loss = actor_critic_train_step(
-                actor_params,
-                critic_params,
-                actor_network.apply,
-                critic_network.apply,
-                actor_optim.update,
-                critic_optim.update,
-                actor_opt_state,
-                critic_opt_state,
-                sampled_obs_buff,
-                sampled_batch_act,
-                sampled_batch_log_prob,
-                sampled_batch_adv,
-                sampled_batch_rew_to_go,
-                eps,
-                ent_coef,
+        # PPO Inner Loop
+        for ppo_epoch in range(ppo_epochs):
+            (
+                obs_buffer,
+                act_buffer,
+                rew_to_go,
+                adv_estimates,
+                log_prob_buffer,
+                main_rng_key
+            ) = shuffle_buffers(
+                obs_buffer,
+                act_buffer,
+                log_prob_buffer,
+                adv_estimates,
+                rew_to_go,
+                main_rng_key
             )
-            mean_actor_loss += actor_loss
-            mean_critic_loss += critic_loss
 
-        mean_actor_loss /= n_mini_batches
-        mean_critic_loss /= n_mini_batches
+            for n in range(n_mini_batches):
+                max_idx, min_idx = ((n + 1) * batch_size), (n * batch_size)
+
+                sampled_obs_buff = obs_buffer[min_idx: max_idx]
+                sampled_batch_act = act_buffer[min_idx: max_idx]
+                sampled_batch_log_prob = log_prob_buffer[min_idx: max_idx]
+                sampled_batch_adv = adv_estimates[min_idx: max_idx]
+                sampled_batch_rew_to_go = rew_to_go[min_idx: max_idx]
+
+                actor_params, critic_params, actor_opt_state, critic_opt_state, actor_loss, critic_loss = actor_critic_train_step(
+                    actor_params,
+                    critic_params,
+                    actor_network.apply,
+                    critic_network.apply,
+                    actor_optim.update,
+                    critic_optim.update,
+                    actor_opt_state,
+                    critic_opt_state,
+                    sampled_obs_buff,
+                    sampled_batch_act,
+                    sampled_batch_log_prob,
+                    sampled_batch_adv,
+                    sampled_batch_rew_to_go,
+                    eps,
+                    ent_coef,
+                )
+                mean_actor_loss += actor_loss
+                mean_critic_loss += critic_loss
+
+        total_updates = ppo_epochs * n_mini_batches
+        mean_actor_loss /= total_updates
+        mean_critic_loss /= total_updates
 
         wandb.log({
             "train/actor_loss": mean_actor_loss,
@@ -415,15 +441,15 @@ def main(
             "eval/num_grasped": num_is_grasped,
         })
 
-        print(f"actor loss: {mean_actor_loss}")
-        print(f"critic loss: {mean_critic_loss}")
-        print(f"mean rew: {mean_episode_rew}")
+        print(f"actor loss: {mean_actor_loss:.6f}")
+        print(f"critic loss: {mean_critic_loss:.6f}")
+        print(f"mean rew: {mean_episode_rew:.3f}")
         print(f"num is touching: {num_is_touching}")
         print(f"num success: {num_success}")
         print(f"num grasped: {num_is_grasped}")
-        print(f"steps per second: {SPS}")
+        print(f"steps per second: {SPS:.1f}")
 
-        print("="*50)
+        print("=" * 50)
 
     wandb.finish()
 
@@ -431,16 +457,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_envs", type=int, default=96)
     parser.add_argument("--eps", type=float, default=0.1)
-    parser.add_argument("--ent_coef", type=float, default=0.01)
+    parser.add_argument("--ent_coef", type=float, default=0.001)
     parser.add_argument("--lambda_", type=float, default=0.95)
-    parser.add_argument("--gamma_", type=float, default=0.95)
+    parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=1500)
     parser.add_argument("--ppo_epochs", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--checkpoint_freq", type=int, default=10)
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
     parser.add_argument("--n_timesteps", type=int, default=300)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=402)
     parser.add_argument("--n_mini_batches", type=int, default=8)  
 
     args = parser.parse_args()

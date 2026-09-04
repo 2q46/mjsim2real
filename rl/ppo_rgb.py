@@ -38,6 +38,7 @@ class ActorNetwork(nn.Module):
         x = x.astype(dtype) / 255.0
         x = (x - 0.5) / 0.5
         log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
+        log_std = jnp.clip(log_std, -2.0, 0.5)
         x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
@@ -61,7 +62,7 @@ class ActorNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.tanh(x)
         x = nn.Dense(self.cfg.output_features, dtype=dtype)(x)
-        x = 1.5 * nn.tanh(x)
+        x = nn.tanh(x)
         return MultivariateNormalDiag(x, jnp.exp(log_std))
 
 class CriticNetwork(nn.Module):
