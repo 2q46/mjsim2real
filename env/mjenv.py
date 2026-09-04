@@ -157,7 +157,7 @@ def compute_rew(
 
     is_close = (dist_ee_cube < 0.01).astype(jnp.float32)
     is_gripped = ((dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
-    success_bonus = ((dist_cube_goal < tolerance) & (is_gripped)).astype(jnp.float32)
+    success_bonus = ((dist_cube_goal < tolerance) & (dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
 
     total_reward = (
         1.5 * reach_rew
