@@ -136,8 +136,8 @@ def compute_rew(
     action_delta = jnp.linalg.norm(ctrl - prev_ctrl, axis=-1)
     gripper_cmd = ctrl[..., -1]
 
-    GRIPPER_CLOSE_NORMALISED = -0.7
-    GRIPPER_OPEN_NORMALISED = 0.5
+    GRIPPER_CLOSE_NORMALISED = -0.55
+    GRIPPER_OPEN_NORMALISED = 0.3
 
     reach_rew = 1.0 - jnp.tanh(25.0 * dist_ee_cube)
     place_rew = 1.0 - jnp.tanh(25.0 * dist_cube_goal)
@@ -150,13 +150,17 @@ def compute_rew(
     gripper_rew = (1.0 - in_grasp_range) * open_target_rew + in_grasp_range * close_target_rew
 
     gated_place_reward = reach_rew * place_rew
+    lift_progress = jnp.clip(current_cube_pos[..., 2] / jnp.maximum(0.1, 1e-5), 0.0, 1.0)
+    lift_reward = in_grasp_range * lift_progress
+
     success_bonus = (dist_cube_goal < tolerance).astype(jnp.float32)
     is_close = (dist_ee_cube < 0.01).astype(jnp.float32)
     is_gripped = ((dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
 
     total_reward = (
-        1.0 * reach_rew
+        1.5 * reach_rew
         + 3.0 * gated_place_reward
+        + 2.0 * lift_reward
         + 1.0 * gripper_rew
         + 10.0 * success_bonus
         - 0.01 * action_delta  
