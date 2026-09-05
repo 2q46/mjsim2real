@@ -136,7 +136,7 @@ def compute_rew(
     raw_gripper_cmd = ctrl[..., -1]
     wrist_flex_cmd = ctrl[..., -3]
 
-    wrist_flex_down = jnp.maximum(0.0, 1.0 - jnp.abs(wrist_flex_cmd - 0.9) / 0.2)
+    #wrist_flex_down = jnp.maximum(0.0, 1.0 - jnp.abs(wrist_flex_cmd - 0.9) / 0.2)
 
     gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.6))
 
@@ -145,8 +145,8 @@ def compute_rew(
     is_gripped = ((raw_gripper_cmd < -0.6) & (is_touching | is_lifted)).astype(jnp.int32)
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
-    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) * wrist_flex_down
-    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) * wrist_flex_down
+    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) #* wrist_flex_down
+    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) #* wrist_flex_down
 
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
     is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
