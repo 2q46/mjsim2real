@@ -78,7 +78,7 @@ def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qp
     return qpos
 
 
-def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.05, qpos_noise_scale=0.2):
+def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.03, qpos_noise_scale=0.1):
     batch_size = mjw_data.qpos.shape[0]
     init_qpos = jnp.tile(wp.to_jax(mjw_model.qpos0), (batch_size, 1))
     init_qvel = jnp.zeros_like(wp.to_jax(mjw_data.qvel))
@@ -121,7 +121,6 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
-
 @partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
@@ -131,90 +130,47 @@ def compute_rew(
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
 ):
- 
-    ee_cube_dist = jnp.linalg.norm(
-        current_ee_pos - current_cube_pos,
-        axis=-1,
-    )
+    ee_cube_dist = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
+    cube_goal_dist = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
 
-    cube_goal_dist = jnp.linalg.norm(
-        cube_goal_pos - current_cube_pos,
-        axis=-1,
-    )
+    raw_gripper_cmd = ctrl[..., -1]
+    wrist_flex_cmd = ctrl[..., -3]
 
-    reach_reward = jnp.exp(-20.0 * ee_cube_dist)
+    wrist_flex_down = jnp.maximum(0.0, 1.0 - jnp.abs(wrist_flex_cmd - 0.9) / 0.2)
 
-    close_reward = jnp.exp(-100.0 * ee_cube_dist)
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.6))
 
-    gripper_cmd = ctrl[..., -1]
+    is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
+    is_lifted = (current_cube_pos[..., 2] > 0.035).astype(jnp.int32)
+    is_gripped = ((raw_gripper_cmd < -0.6) & (is_touching | is_lifted)).astype(jnp.int32)
+    is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
-    is_close = ee_cube_dist < 0.02
-    is_gripper_closed = gripper_cmd < 0.15
+    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) * wrist_flex_down
+    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) * wrist_flex_down
 
-    grasp_reward = (
-        is_close & is_gripper_closed
-    ).astype(jnp.float32)
+    is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
+    is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
+    in_grasp_range = 1.0 - jnp.tanh(50.0 * ee_cube_dist)
+    lift_reward = in_grasp_range * jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
 
-   
-    close_gripper_reward = (
-        jnp.exp(-80.0 * ee_cube_dist)
-        * (jnp.maximum(0, 1 - jnp.abs(gripper_cmd - 0.1)/0.1))
-    )
-
-    cube_height = 0.015
-    desired_lift = 0.1
-
-    lift_height = current_cube_pos[..., 2] - cube_height
-
-    lift_progress = jnp.clip(
-        lift_height / desired_lift,
-        0.0,
-        1.0,
-    )
-
-    grasp_gate = (
-        is_close & is_gripper_closed
-    ).astype(jnp.float32)
-
-    lift_reward = grasp_gate * lift_progress
-    goal_reward = jnp.exp(-15.0 * cube_goal_dist)
-
-    goal_close_reward = jnp.exp(-60.0 * cube_goal_dist)
-
- 
-    success = (
-        (cube_goal_dist < tolerance)
-        & (ee_cube_dist < 0.025)
-        & (gripper_cmd < 0.15)
-    ).astype(jnp.float32)
-
-    action_delta = jnp.linalg.norm(
-        ctrl - prev_ctrl,
-        axis=-1,
-    )
-
-    action_penalty = 0.01 * action_delta
+    action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
 
     total_reward = (
-        2.0 * reach_reward
-        + 1.0 * close_reward
-        + 2.0 * grasp_reward
-        + 1.0 * close_gripper_reward
-        + 4.0 * lift_reward
-        + 2.0 * goal_reward
-        + 3.0 * goal_close_reward
-        + 20.0 * success
-        - action_penalty
+          1.0 * is_cube_close
+        + 2.0 * is_very_close
+        + 2.0 * is_close_goal
+        + 2.0 * is_very_close_target
+        + 1.0 * lift_reward
+        + 10.0 * is_success
+        - 0.01 * action_delta
     )
 
     return (
         total_reward,
-        is_close.astype(jnp.float32),
-        grasp_gate,
-        success,
+        is_touching,
+        is_gripped,
+        is_success,
     )
-
-
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
 
@@ -251,7 +207,7 @@ if __name__ == '__main__':
         mjw_data, 
         k2, 
         cube_id, 
-        pos_range=0.05, 
+        pos_range=0.03, 
         qpos_noise_scale=0.03
     )
     goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
