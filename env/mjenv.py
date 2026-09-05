@@ -131,45 +131,89 @@ def compute_rew(
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
 ):
-    dist_ee_cube = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
-    dist_cube_goal = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-    action_delta = jnp.linalg.norm(ctrl - prev_ctrl, axis=-1)
-    gripper_cmd = ctrl[..., -1]
-    #wrist_flex = ctrl[..., -3]
-
-    GRIPPER_CLOSE_NORMALISED = -0.65
-    GRIPPER_OPEN_NORMALISED = -0.1
-
-    #wrist_flex_down = jnp.maximum(0, 1 - jnp.abs(wrist_flex - 0.8) / 0.2)
-    reach_rew = 1.0 - jnp.tanh(25.0 * dist_ee_cube)
-    place_rew = 1.0 - jnp.tanh(25.0 * dist_cube_goal)
-
-    in_grasp_range = 1.0 - jnp.tanh(50.0 * dist_ee_cube)
-
-    open_target_rew = 1.0 - jnp.abs(gripper_cmd - GRIPPER_OPEN_NORMALISED) / 1.0
-    close_target_rew = 1.0 - jnp.abs(gripper_cmd - GRIPPER_CLOSE_NORMALISED) / 1.0
-
-    gripper_rew = (1.0 - in_grasp_range) * open_target_rew + in_grasp_range * close_target_rew
-
-    gated_place_reward = reach_rew * place_rew
-    lift_progress = jnp.clip(current_cube_pos[..., 2] / jnp.maximum(0.1, 1e-5), 0.0, 1.0)
-    lift_reward = in_grasp_range * lift_progress
-
-    is_close = (dist_ee_cube < 0.01).astype(jnp.float32)
-    is_gripped = ((dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
-    success_bonus = ((dist_cube_goal < tolerance) & (dist_ee_cube < 0.01) & (gripper_cmd < -0.5)).astype(jnp.float32)
-
-    total_reward = (
-        1.5 * reach_rew
-        #+ 1.5 * wrist_flex_down
-        + 3.0 * gated_place_reward
-        + 2.0 * lift_reward
-        + 1.0 * gripper_rew
-        + 10.0 * success_bonus
-        - 0.01 * action_delta  
+ 
+    ee_cube_dist = jnp.linalg.norm(
+        current_ee_pos - current_cube_pos,
+        axis=-1,
     )
 
-    return total_reward, is_close, is_gripped, success_bonus
+    cube_goal_dist = jnp.linalg.norm(
+        cube_goal_pos - current_cube_pos,
+        axis=-1,
+    )
+
+    reach_reward = jnp.exp(-20.0 * ee_cube_dist)
+
+    close_reward = jnp.exp(-100.0 * ee_cube_dist)
+
+    gripper_cmd = ctrl[..., -1]
+
+    is_close = ee_cube_dist < 0.02
+    is_gripper_closed = gripper_cmd < 0.15
+
+    grasp_reward = (
+        is_close & is_gripper_closed
+    ).astype(jnp.float32)
+
+   
+    close_gripper_reward = (
+        jnp.exp(-80.0 * ee_cube_dist)
+        * (jnp.maximum(0, 1 - jnp.abs(gripper_cmd - 0.1)/0.1))
+    )
+
+    cube_height = 0.015
+    desired_lift = 0.1
+
+    lift_height = current_cube_pos[..., 2] - cube_height
+
+    lift_progress = jnp.clip(
+        lift_height / desired_lift,
+        0.0,
+        1.0,
+    )
+
+    grasp_gate = (
+        is_close & is_gripper_closed
+    ).astype(jnp.float32)
+
+    lift_reward = grasp_gate * lift_progress
+    goal_reward = jnp.exp(-15.0 * cube_goal_dist)
+
+    goal_close_reward = jnp.exp(-60.0 * cube_goal_dist)
+
+ 
+    success = (
+        (cube_goal_dist < tolerance)
+        & (ee_cube_dist < 0.025)
+        & (gripper_cmd < 0.15)
+    ).astype(jnp.float32)
+
+    action_delta = jnp.linalg.norm(
+        ctrl - prev_ctrl,
+        axis=-1,
+    )
+
+    action_penalty = 0.01 * action_delta
+
+    total_reward = (
+        2.0 * reach_reward
+        + 1.0 * close_reward
+        + 2.0 * grasp_reward
+        + 1.0 * close_gripper_reward
+        + 4.0 * lift_reward
+        + 2.0 * goal_reward
+        + 3.0 * goal_close_reward
+        + 20.0 * success
+        - action_penalty
+    )
+
+    return (
+        total_reward,
+        is_close.astype(jnp.float32),
+        grasp_gate,
+        success,
+    )
+
 
 
 def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):

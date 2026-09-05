@@ -19,13 +19,12 @@
     </asset>
 
     <worldbody>
-<camera name="cam0" pos="1.105 -0.391 0.304" xyaxes="0.334 0.943 0.000 -0.237 0.084 0.968"/>
-
-        <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+    <camera pos="0.889 -0.224 0.297" name="cam0" xyaxes="0.244 0.970 0.000 -0.299 0.075 0.951"/>      
+    <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane" />
         <body name="redcube" pos="0.32 0.0 0.0135">
             <freejoint/>
-        <geom name="red_cube" size="0.0125 0.0125 0.0125" type="box" rgba="1 0 0 1" 
+        <geom name="red_cube" size="0.015 0.015 0.015" type="box" rgba="1 0 0 1" 
         condim="3" friction="1 .03 .003" contype="2"
         conaffinity="1" solref="0.01 1" mass="0.005"/>        
     </body>
