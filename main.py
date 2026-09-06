@@ -455,7 +455,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_envs", type=int, default=96)
     parser.add_argument("--eps", type=float, default=0.1)
-    parser.add_argument("--ent_coef", type=float, default=0.001)
+    parser.add_argument("--ent_coef", type=float, default=0.005)
     parser.add_argument("--lambda_", type=float, default=0.95)
     parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=1500)
