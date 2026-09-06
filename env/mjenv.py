@@ -140,7 +140,7 @@ def compute_rew(
 
     is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
   
-    is_gripped = ((raw_gripper_cmd < 0.13) & is_touching).astype(jnp.int32)
+    is_gripped = ((raw_gripper_cmd < 0.13) & is_touching).astype(jnp.int32) 
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
     is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist))
