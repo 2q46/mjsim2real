@@ -137,7 +137,7 @@ def compute_rew(
 
     raw_gripper_cmd = ctrl[..., -1]
 
-    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.25))
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, jnp.abs(jnp.abs(raw_gripper_cmd) - 0.25)))
 
     is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
   
