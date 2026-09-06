@@ -104,7 +104,7 @@ def sample_action(mjw_data, rng_key):
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
     
     ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
-    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.4])
+    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.7])
     
     normalized_ctrl = (ctrl + 1.0) / 2.0
     
@@ -121,6 +121,8 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
+
+
 @partial(jax.jit, static_argnames=["tolerance", "goal_height"])
 def compute_rew(
     cube_goal_pos: jax.Array,
@@ -129,18 +131,17 @@ def compute_rew(
     ctrl: jax.Array,
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
-    goal_height: float = 0.1,
 ):
     ee_cube_dist = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     cube_goal_dist = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
 
     raw_gripper_cmd = ctrl[..., -1]
 
-    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd - 0.13))
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.25))
 
     is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
   
-    is_gripped = ((raw_gripper_cmd < 0.13) & is_touching).astype(jnp.int32) 
+    is_gripped = ((raw_gripper_cmd < -0.25) & is_touching).astype(jnp.int32) 
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
     is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist))
@@ -154,7 +155,7 @@ def compute_rew(
     lift_reward = (
         in_grasp_range
         * gripper_closed
-        * jnp.clip((current_cube_pos[..., 2] - 0.015) / goal_height, 0.0, 1.0)
+        * jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
     )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
