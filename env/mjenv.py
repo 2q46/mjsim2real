@@ -121,6 +121,7 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
+
 @partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
@@ -136,7 +137,6 @@ def compute_rew(
     raw_gripper_cmd = ctrl[..., -1]
     wrist_flex_cmd = ctrl[..., -3]
 
-    #wrist_flex_down = jnp.maximum(0.0, 1.0 - jnp.abs(wrist_flex_cmd - 0.9) / 0.2)
 
     gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.6))
 
@@ -145,8 +145,8 @@ def compute_rew(
     is_gripped = ((raw_gripper_cmd < -0.6) & (is_touching | is_lifted)).astype(jnp.int32)
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
-    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) #* wrist_flex_down
-    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) #* wrist_flex_down
+    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) 
+    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) 
 
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
     is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
@@ -160,7 +160,7 @@ def compute_rew(
         + 2.0 * is_very_close
         + 2.0 * is_close_goal
         + 2.0 * is_very_close_target
-        + 1.0 * lift_reward
+        + 3.0 * lift_reward
         + 10.0 * is_success
         - 0.01 * action_delta
     )
