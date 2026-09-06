@@ -121,8 +121,7 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     wp_cube_pos = mjw_data.xpos[:, cube_id].contiguous()
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
-
-@partial(jax.jit, static_argnames=["tolerance"])
+@partial(jax.jit, static_argnames=["tolerance", "goal_height"])
 def compute_rew(
     cube_goal_pos: jax.Array,
     current_cube_pos: jax.Array,
@@ -130,28 +129,33 @@ def compute_rew(
     ctrl: jax.Array,
     prev_ctrl: jax.Array,
     tolerance: float = 0.02,
+    goal_height: float = 0.1,
 ):
     ee_cube_dist = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     cube_goal_dist = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
 
     raw_gripper_cmd = ctrl[..., -1]
-    wrist_flex_cmd = ctrl[..., -3]
-
 
     gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd - 0.13))
 
     is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
-    is_lifted = (current_cube_pos[..., 2] > 0.035).astype(jnp.int32)
-    is_gripped = ((raw_gripper_cmd < 0.13) & (is_touching | is_lifted)).astype(jnp.int32)
+  
+    is_gripped = ((raw_gripper_cmd < 0.13) & is_touching).astype(jnp.int32)
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
-    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) 
-    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist)) 
+    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist))
+    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist))
 
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
     is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
+
     in_grasp_range = 1.0 - jnp.tanh(50.0 * ee_cube_dist)
-    lift_reward = in_grasp_range * jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
+  
+    lift_reward = (
+        in_grasp_range
+        * gripper_closed
+        * jnp.clip((current_cube_pos[..., 2] - 0.015) / goal_height, 0.0, 1.0)
+    )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
 
