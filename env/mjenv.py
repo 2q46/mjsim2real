@@ -104,7 +104,7 @@ def sample_action(mjw_data, rng_key):
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
     
     ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
-    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  1.74533])
+    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.4])
     
     normalized_ctrl = (ctrl + 1.0) / 2.0
     
@@ -138,11 +138,11 @@ def compute_rew(
     wrist_flex_cmd = ctrl[..., -3]
 
 
-    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd + 0.6))
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, raw_gripper_cmd - 0.13))
 
     is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
     is_lifted = (current_cube_pos[..., 2] > 0.035).astype(jnp.int32)
-    is_gripped = ((raw_gripper_cmd < -0.6) & (is_touching | is_lifted)).astype(jnp.int32)
+    is_gripped = ((raw_gripper_cmd < 0.13) & (is_touching | is_lifted)).astype(jnp.int32)
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
 
     is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist)) 
