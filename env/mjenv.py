@@ -123,7 +123,7 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     return set_new_height(jax_cube_pos, goal_height)
 
 
-@partial(jax.jit, static_argnames=["tolerance", "goal_height"])
+@partial(jax.jit, static_argnames=["tolerance"])
 def compute_rew(
     cube_goal_pos: jax.Array,
     current_cube_pos: jax.Array,
