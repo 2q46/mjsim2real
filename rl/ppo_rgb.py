@@ -1,10 +1,10 @@
 import jax
-from distrax import MultivariateNormalDiag
 import jax.numpy as jnp
 import flax.linen as nn
 import flax.struct as struct
 from typing import Tuple
 from functools import partial
+from distrax import MultivariateNormalDiag
 
 @struct.dataclass
 class ActorConfig:
@@ -13,6 +13,7 @@ class ActorConfig:
     output_features: int = 6
     features: Tuple[int, ...] = (16, 32, 8, 1)
     dense_features: Tuple[int, ...] = (128, 128, 32, 16)
+    log_std_features: Tuple[int, ...] = (64, 32)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
     start_log_std: float = -0.3
@@ -37,8 +38,9 @@ class ActorNetwork(nn.Module):
         dtype = jnp.float32
         x = x.astype(dtype) / 255.0
         x = (x - 0.5) / 0.5
-        log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
-        log_std = jnp.clip(log_std, -2.0, 0.5)
+        #log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
+        #log_std = jnp.clip(log_std, -2.0, 0.5)
+        
         x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
@@ -53,16 +55,25 @@ class ActorNetwork(nn.Module):
         x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
 
         x = x.reshape((x.shape[0], -1))
+
+        log_std = nn.Dense(self.cfg.log_std_features[0], dtype=dtype)(x)
+        log_std = nn.tanh(log_std)
+        log_std = nn.Dense(self.cfg.log_std_features[1], dtype=dtype)(log_std)
+        log_std = nn.tanh(log_std)
+        log_std = nn.Dense(self.cfg.output_features, dtype=dtype)(log_std)
+        log_std = nn.tanh(log_std)
+
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
-        x = nn.tanh(x)
+        x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)
-        x = nn.tanh(x)
+        x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[2], dtype=dtype)(x)
-        x = nn.tanh(x)
+        x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
-        x = nn.tanh(x)
+        x = nn.relu(x)
         x = nn.Dense(self.cfg.output_features, dtype=dtype)(x)
         x = nn.tanh(x)
+
         return MultivariateNormalDiag(x, jnp.exp(log_std))
 
 class CriticNetwork(nn.Module):

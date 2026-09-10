@@ -9,5 +9,4 @@ from env.mjenv import (
     reset_batch,
 )
 
-from rl.ppo_rgb import ActorNetwork, ActorConfig
 

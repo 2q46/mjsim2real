@@ -16,6 +16,7 @@ import orbax.checkpoint as ocp
 import wandb
 import mediapy as media
 import numpy as np
+from distrax import MultivariateNormalDiag
 
 from env.mjenv import (
     find_goal_cube_pos,
@@ -232,6 +233,8 @@ def main(
     n_timesteps: int = 300,
     seed: int = 42,
     n_mini_batches: int = 8,
+    num_actuators: int = 6
+
 ):
     wandb.init(
         project="PickCube-mjsim2real-rl",
