@@ -11,8 +11,8 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (16, 32, 8, 1)
-    dense_features: Tuple[int, ...] = (128, 128, 32, 16)
+    features: Tuple[int, ...] = (16, 16, 8, 4)
+    dense_features: Tuple[int, ...] = (256, 256, 128, 32)
     log_std_features: Tuple[int, ...] = (64, 32)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
@@ -23,7 +23,7 @@ class ActorConfig:
 class CriticConfig:
 
     img_size: int = 128
-    features: Tuple[int, ...] = (16, 32, 8, 1)
+    features: Tuple[int, ...] = (16, 16, 8, 1)
     dense_features: Tuple[int, ...] =(128, 64, 32, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
