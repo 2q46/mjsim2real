@@ -1,18 +1,6 @@
 <mujoco model="so101">
-  <!--
-    Local modifications of the MuJoCo Menagerie robotstudio_so101 model (Apache 2.0):
-    1. Wrist camera physical intrinsics (sensorsize/focal) removed and an explicit
-       fovy added, so the simulator's fovy-based FOV randomization is honored
-       (MuJoCo ignores fovy when physical intrinsics are present).
-   2. gripperframe site quat changed from "1 0 1 0" to "0 0 1 0" so its local z
-      points along the gripper "forward" direction (the library convention used
-      by TCP-orientation observations). The look-at task uses the wrist camera
-      optical axis instead. See PROVENANCE.md.
-    See PROVENANCE.md.
-  -->
-  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="30" ls_iterations="50" impratio="10"/>
-
-  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="10" ls_iterations="20" impratio="10"/>5
+  <compiler angle="radian" meshdir="assets_so101" autolimits="true"/>
 
   <visual>
     <scale contactwidth="0.1" contactheight="0.05" forcewidth="0.02" framelength="0.75" framewidth="0.025"
@@ -190,11 +178,11 @@
                   pos="-0.0025 0 -0.022"/>
                 <geom name="fixed_jaw_box2" class="collision_gripper" type="box" size="0.01 0.015 0.005"
                   pos="-0.024 0 -0.04"/>
-                <geom name="fixed_jaw_sph_tip1" class="collision_gripper" type="sphere" size="0.00175"
+                <geom name="fixed_jaw_sph_tip1" class="collision_gripper" type="sphere" size="0.00075"
                   pos="-0.0081 0 -0.101"/>
-                <geom name="fixed_jaw_sph_tip2" class="collision_gripper" type="sphere" size="0.00175"
+                <geom name="fixed_jaw_sph_tip2" class="collision_gripper" type="sphere" size="0.00075"
                   pos="-0.0081 0.0035 -0.0975"/>
-                <geom name="fixed_jaw_sph_tip3" class="collision_gripper" type="sphere" size="0.00175"
+                <geom name="fixed_jaw_sph_tip3" class="collision_gripper" type="sphere" size="0.00075"
                   pos="-0.0081 -0.0035 -0.0975"/>
                 <geom type="mesh" class="collision_gripper_mesh" pos="0 -0.000218 0.00095" quat="0 1 0 0"
                   mesh="wrist_roll_follower_so101_gripper_part0_v1"/>
@@ -208,16 +196,13 @@
                   pos="-0.0125 0 -0.0727"/>
                 <geom name="fixed_jaw_box7" class="collision_gripper" type="box" size="0.001 0.01 0.008"
                   pos="-0.0143 0 -0.053"/>
-                <!-- Frame gripperframe: quat set to the library convention (local
-                     z = gripper "forward", wrist->fingertips) so TCP-orientation
-                     observations match the prior model. The look-at task uses the
-                     wrist camera optical axis, not this site. Upstream used
-                     quat="1 0 1 0". See PROVENANCE.md. -->
-                <site group="3" name="gripperframe" pos="0.012 -0.000218 -0.098127" quat="0 0 1 0"/>
+                <!-- Frame gripperframe -->
+                 <site name="fixed_pad_touch" type="box" pos="-0.01 0 -0.094" size="0.003 0.003 0.008" rgba="0 1 0 0.3"/>
+                <site group="3" name="gripperframe" pos="0.012 -0.000218 -0.098127" quat="1 0 1 0"/>
                 <!-- Camera mount -->
                 <body name="camera_mount">
                   <camera name="wrist_cam" mode="fixed" pos="0.0 0.055 -0.045" euler="-0.57 0 0" resolution="1920 1080"
-                    fovy="48.5"/>
+                    sensorsize="0.00576 0.00324" focal="0.0036 0.0036"/>
                   <geom type="mesh" mass="0.012" class="visual" pos="0 -0.000218 0.00095" quat="0 1 0 0"
                     mesh="wrist_roll_follower_so101_camera_mount" material="wrist_roll_follower_so101_v1_material"/>
                   <geom name="camera_box1" class="collision_gripper" type="box" size="0.015 0.015 0.003"
@@ -241,16 +226,17 @@
                     mesh="moving_jaw_so101_gripper_part1_v1"/>
                   <geom name="moving_jaw_box1" class="collision_gripper" type="box" size="0.01 0.01 0.015"
                     pos="-0.0 -0.013 0.019"/>
-                  <geom name="moving_jaw_sph_tip1" class="collision_gripper" type="sphere" size="0.00175"
+                  <geom name="moving_jaw_sph_tip1" class="collision_gripper" type="sphere" size="0.00075"
                     pos="-0.012 -0.078 0.0192"/>
-                  <geom name="moving_jaw_sph_tip2" class="collision_gripper" type="sphere" size="0.00175"
+                  <geom name="moving_jaw_sph_tip2" class="collision_gripper" type="sphere" size="0.00075"
                     pos="-0.012 -0.0745 0.0225"/>
-                  <geom name="moving_jaw_sph_tip3" class="collision_gripper" type="sphere" size="0.00175"
+                  <geom name="moving_jaw_sph_tip3" class="collision_gripper" type="sphere" size="0.00075"
                     pos="-0.012 -0.0745 0.0155"/>
                   <geom name="moving_jaw_box2" class="collision_gripper" type="box" size="0.001 0.004 0.004"
                     pos="-0.0113 -0.076 0.01875"/>
                   <geom name="moving_jaw_box3" class="collision_gripper" type="box" size="0.001 0.005 0.006"
                     pos="-0.0093 -0.067 0.01875"/>
+                  <site name="moving_pad_touch" type="box" pos="-0.010 -0.07 0.019" size="0.003 0.008 0.003" rgba="0 1 0 0.3"/>
                 </body>
               </body>
             </body>
@@ -268,4 +254,9 @@
     <position class="sts3215" name="wrist_roll" joint="wrist_roll" ctrlrange="-2.74385 2.84121"/>
     <position class="sts3215" name="gripper" joint="gripper" ctrlrange="-0.17453 1.74533"/>
   </actuator>
+
+  <sensor>
+  <touch name="fixed_jaw_touch" site="fixed_pad_touch"/>
+  <touch name="moving_jaw_touch" site="moving_pad_touch"/>
+</sensor>
 </mujoco>

@@ -48,6 +48,24 @@ def get_gripper_id(mj_model):
     return mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SITE, "gripperframe")
 
 
+def get_touch_sensor_adr(mj_model, name):
+    """Address of a scalar touch sensor's value in sensordata."""
+    sid = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, name)
+    assert sid >= 0, f"sensor '{name}' not found in model"
+    return int(mj_model.sensor_adr[sid])
+
+
+def get_gripper_touch_forces(mjw_data, fixed_adr, moving_adr):
+    """
+    Returns (fixed_jaw_force, moving_jaw_force), each (nworld,) — summed
+    contact-normal force (N) in each fingerpad's touch-sensor zone.
+    """
+    sensordata = wp.to_jax(mjw_data.sensordata)  # (nworld, nsensordata)
+    fixed_force = sensordata[:, fixed_adr]
+    moving_force = sensordata[:, moving_adr]
+    return fixed_force, moving_force
+
+
 def get_free_body_qpos_adr(mj_model, body_id):
     jnt_adr = mj_model.body_jntadr[body_id]
     assert jnt_adr >= 0, "body has no joint (is it welded to the world?)"
@@ -64,17 +82,17 @@ def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qp
     arm_noise = jax.random.uniform(
         k_arm, base_qpos.shape, minval=-qpos_noise_scale, maxval=qpos_noise_scale
     )
-    
+
     mask = jnp.ones(base_qpos.shape[-1], dtype=jnp.float32)
     mask = mask.at[cube_qpos_adr : cube_qpos_adr + 7].set(0.0)
-    
+
     qpos = base_qpos + (arm_noise * mask)
 
     cube_xy_noise = jax.random.uniform(
         k_cube, (batch_size, 2), minval=-pos_range, maxval=pos_range
     )
     qpos = qpos.at[:, cube_qpos_adr : cube_qpos_adr + 2].add(cube_xy_noise)
-    
+
     return qpos
 
 
@@ -84,7 +102,7 @@ def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.03,
     init_qvel = jnp.zeros_like(wp.to_jax(mjw_data.qvel))
 
     cube_qpos_adr = get_free_body_qpos_adr(mj_model, cube_id)
-    
+
     randomized_qpos = _randomize_qpos(
         rng_key, init_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale
     )
@@ -102,12 +120,12 @@ def sample_action(mjw_data, rng_key):
 
 @partial(jax.jit)
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
-    
+
     ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
     ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.7])
-    
+
     normalized_ctrl = (ctrl + 1.0) / 2.0
-    
+
     return ctrl_min + normalized_ctrl * (ctrl_max - ctrl_min)
 
 
@@ -122,76 +140,69 @@ def find_goal_cube_pos(mj_model, mjw_data, goal_height=0.1):
     jax_cube_pos = wp.to_jax(wp_cube_pos)
     return set_new_height(jax_cube_pos, goal_height)
 
-
-@partial(jax.jit, static_argnames=["tolerance"])
+@partial(jax.jit, static_argnames=["tolerance", "touch_threshold"])
 def compute_rew(
-    cube_goal_pos: jax.Array,
-    current_cube_pos: jax.Array,
-    current_ee_pos: jax.Array,
-    ctrl: jax.Array,
-    prev_ctrl: jax.Array,
-    tolerance: float = 0.02,
+    cube_goal_pos, current_cube_pos, current_ee_pos,
+    ctrl, prev_ctrl,
+    fixed_jaw_force, moving_jaw_force,
+    tolerance=0.02,
+    touch_threshold=0.3,
 ):
     ee_cube_dist = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     cube_goal_dist = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
-
     raw_gripper_cmd = ctrl[..., -1]
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, jnp.abs(raw_gripper_cmd - 0.175)))
 
-    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, jnp.abs(raw_gripper_cmd - 0.15)))
+    is_touch = (ee_cube_dist < 0.017).astype(jnp.int32)
 
-    is_touching = (ee_cube_dist < 0.017).astype(jnp.int32)
-  
-    is_gripped = ((raw_gripper_cmd < 0.15) & is_touching).astype(jnp.int32) 
+    is_gripped = (
+        (fixed_jaw_force > touch_threshold) & (moving_jaw_force > touch_threshold) & is_touch
+    ).astype(jnp.int32)
     is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
-
-    is_cube_close = (1.0 - jnp.tanh(20.0 * ee_cube_dist))
-    is_close_goal = (1.0 - jnp.tanh(20.0 * cube_goal_dist))
-
+    is_cube_close = 1.0 - jnp.tanh(20.0 * ee_cube_dist)
+    is_close_goal = 1.0 - jnp.tanh(20.0 * cube_goal_dist)
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
     is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
+    lift_reward = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed * \
+                  jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
 
-    in_grasp_range = 1.0 - jnp.tanh(50.0 * ee_cube_dist)
-  
-    lift_reward = (
-        in_grasp_range
-        * gripper_closed
-        * jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
+    potential = (
+        1.0 * is_cube_close
+        + 2.0 * is_very_close
+        + 4.0 * is_close_goal
+        + 10.0 * is_very_close_target
+        + 4.0 * lift_reward
     )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
 
-    total_reward = (
-          1.0 * is_cube_close
-        + 2.0 * is_very_close
-        + 2.0 * is_close_goal
-        + 2.0 * is_very_close_target
-        + 3.0 * lift_reward
-        + 10.0 * is_success
-        - 0.01 * action_delta
-    )
+    # small bonus just for gripping, on top of the success bonus, to shape toward closing on the cube
+    total_reward = potential + 2.0 * is_gripped + 10.0 * is_success - 0.01 * action_delta
 
-    return (
-        total_reward,
-        is_touching,
-        is_gripped,
-        is_success,
-    )
+    return (total_reward, is_touch, is_gripped, is_success)
 
-def step_batch(cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl, n_frames=3):
 
+def step_batch(
+    cube_id, gripper_id, mjw_model, mjw_data, ctrl, goal_cube_pos, prev_ctrl,
+    fixed_touch_adr, moving_touch_adr, n_frames=3,
+):
     scaled_ctrl = scale_action_to_actuators(ctrl)
     ctrl_wp = wp.from_jax(scaled_ctrl)
-    prev_ctrl = wp.to_jax(prev_ctrl) 
+    prev_ctrl = wp.to_jax(prev_ctrl)
     wp.copy(mjw_data.ctrl, ctrl_wp)
-    
+
     for _ in range(n_frames):
         mjw.step(mjw_model, mjw_data)
-        
+
     current_ee_pos = wp.to_jax(mjw_data.site_xpos)[:, gripper_id]
     current_cube_pos = wp.to_jax(mjw_data.xpos)[:, cube_id]
+
+    fixed_force, moving_force = get_gripper_touch_forces(mjw_data, fixed_touch_adr, moving_touch_adr)
     
-    reward = compute_rew(goal_cube_pos, current_cube_pos, current_ee_pos, scaled_ctrl, prev_ctrl)
-    return reward
+    return compute_rew(
+            goal_cube_pos, current_cube_pos, current_ee_pos,
+            scaled_ctrl, prev_ctrl, fixed_force, moving_force,
+        )
 
 
 if __name__ == '__main__':
@@ -205,14 +216,16 @@ if __name__ == '__main__':
 
     cube_id = get_cube_id(mj_model)
     ee_id = get_gripper_id(mj_model)
+    fixed_touch_adr = get_touch_sensor_adr(mj_model, "fixed_jaw_touch")
+    moving_touch_adr = get_touch_sensor_adr(mj_model, "moving_jaw_touch")
 
     reset_batch(
-        mj_model, 
-        mjw_model, 
-        mjw_data, 
-        k2, 
-        cube_id, 
-        pos_range=0.03, 
+        mj_model,
+        mjw_model,
+        mjw_data,
+        k2,
+        cube_id,
+        pos_range=0.03,
         qpos_noise_scale=0.03
     )
     goal_cube_pos = find_goal_cube_pos(mj_model, mjw_data)
@@ -224,8 +237,15 @@ if __name__ == '__main__':
         k3, base_key = jax.random.split(base_key)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
-        rew = step_batch(cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos, prev_ctrl)
+        (rew, is_gripped, is_success), fixed_force, moving_force = step_batch(
+            cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos, prev_ctrl,
+            fixed_touch_adr, moving_touch_adr,
+        )
         prev_ctrl = action
         frames.append(np.asarray(obs[0], dtype=np.uint8))
+
+        if i % 20 == 0:
+            print(f"step {i}: fixed_force={fixed_force[0]:.3f} N, "
+                  f"moving_force={moving_force[0]:.3f} N, gripped={bool(is_gripped[0])}")
 
     media.write_video(path="vid.mp4", images=frames)

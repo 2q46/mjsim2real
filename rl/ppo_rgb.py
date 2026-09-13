@@ -24,7 +24,7 @@ class CriticConfig:
 
     img_size: int = 128
     features: Tuple[int, ...] = (16, 16, 8, 1)
-    dense_features: Tuple[int, ...] =(128, 64, 32, 16)
+    dense_features: Tuple[int, ...] =(256, 128, 64, 16)
     kernel_size: tuple = (3, 3)
     dropout_rate: float = 5e-2
 
@@ -61,7 +61,8 @@ class ActorNetwork(nn.Module):
         log_std = nn.Dense(self.cfg.log_std_features[1], dtype=dtype)(log_std)
         log_std = nn.tanh(log_std)
         log_std = nn.Dense(self.cfg.output_features, dtype=dtype)(log_std)
-        log_std = nn.tanh(log_std)
+        log_std = 3 * nn.tanh(log_std)
+        log_std = jnp.clip(log_std, -3.0, -1.0)
 
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)

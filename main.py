@@ -27,6 +27,7 @@ from env.mjenv import (
     render_batch,
     reset_batch,
     step_batch,
+    get_touch_sensor_adr
 )
 from rl.ppo_rgb import (
     ActorConfig,
@@ -289,6 +290,8 @@ def main(
     
     cube_id = get_cube_id(mj_model)
     gripper_id = get_gripper_id(mj_model)
+    fixed_touch_addr = get_touch_sensor_adr(mj_model, "fixed_jaw_touch")
+    moving_touch_addr = get_touch_sensor_adr(mj_model, "moving_jaw_touch")
     
     for i in range(num_epochs):
 
@@ -319,7 +322,7 @@ def main(
             policy = eval_policy(actor_params, obs)
             value = eval_value(critic_params, obs)
             actions, log_prob = policy.sample_and_log_prob(seed=timestep_keys[t])
-            rew, is_touching, is_grasped, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos, prev_ctrl)
+            rew, is_touching, is_grasped, is_success = step_batch(cube_id, gripper_id, mjw_model, mjw_data, actions, goal_cube_pos, prev_ctrl, fixed_touch_addr, moving_touch_addr)
             new_obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
             obs_buffer, act_buffer, rew_buffer, val_buffer, log_prob_buffer, success_buffer, is_touching_buffer, is_grasped_buffer = update_buffers(
                     obs_buffer,
