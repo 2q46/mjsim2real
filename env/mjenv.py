@@ -135,7 +135,7 @@ def sample_action(mjw_data, rng_key):
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
 
     ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
-    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.7])
+    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.65])
 
     normalized_ctrl = (ctrl + 1.0) / 2.0
 
