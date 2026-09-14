@@ -22,7 +22,7 @@ def init_mujoco(num_envs):
 
 def init_rendering(mj_model, num_envs, img_size):
     render_ctx = mjw.create_render_context(
-        mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True, use_shadows=True
+        mj_model, nworld=num_envs, cam_res=img_size, render_rgb=True, use_shadows=True, background_color=(0.0, 0.0, 0.0, 1.0)
     )
     rgb_buffer = wp.zeros(
         (num_envs, img_size[1], img_size[0]),
@@ -97,18 +97,31 @@ def _randomize_qpos(rng_key, base_qpos, batch_size, cube_qpos_adr, pos_range, qp
 
 
 def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.03, qpos_noise_scale=0.1):
+
+    key_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_KEY, "grasp_ready")
     batch_size = mjw_data.qpos.shape[0]
-    init_qpos = jnp.tile(wp.to_jax(mjw_model.qpos0), (batch_size, 1))
-    init_qvel = jnp.zeros_like(wp.to_jax(mjw_data.qvel))
+    print("nkey:", mj_model.nkey)
+    assert key_id >= 0, "keyframe 'grasp_ready' not found"
 
+    key_qpos = jnp.array(mj_model.key_qpos[key_id], dtype=jnp.float32)  # (nq,)
+    key_qvel = jnp.array(mj_model.key_qvel[key_id], dtype=jnp.float32)  # (nv,)
+    key_action = jnp.array(mj_model.key_ctrl[key_id], dtype=jnp.float32)
+
+    qpos = jnp.tile(key_qpos, (batch_size, 1))
+    qvel = jnp.tile(key_qvel, (batch_size, 1))
+    action = jnp.tile(key_action, (batch_size, 1))
+
+   
     cube_qpos_adr = get_free_body_qpos_adr(mj_model, cube_id)
-
-    randomized_qpos = _randomize_qpos(
-        rng_key, init_qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale
+    '''
+    qpos = _randomize_qpos(
+        rng_key, qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale
     )
-
-    wp.copy(mjw_data.qpos, wp.from_jax(randomized_qpos))
-    wp.copy(mjw_data.qvel, wp.from_jax(init_qvel))
+    '''
+    wp.copy(mjw_data.qpos, wp.from_jax(qpos))
+    wp.copy(mjw_data.qvel, wp.from_jax(qvel))
+    wp.copy(mjw_data.ctrl, wp.from_jax(action))
+    wp.synchronize()
     mjw.forward(mjw_model, mjw_data)
 
 
@@ -146,32 +159,31 @@ def compute_rew(
     ctrl, prev_ctrl,
     fixed_jaw_force, moving_jaw_force,
     tolerance=0.02,
-    touch_threshold=0.3,
+    touch_threshold=1.5,
 ):
     ee_cube_dist = jnp.linalg.norm(current_ee_pos - current_cube_pos, axis=-1)
     cube_goal_dist = jnp.linalg.norm(cube_goal_pos - current_cube_pos, axis=-1)
     raw_gripper_cmd = ctrl[..., -1]
-    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, jnp.abs(raw_gripper_cmd - 0.175)))
+    gripper_closed = 1.0 - jnp.tanh(5.0 * jnp.maximum(0.0, jnp.abs(raw_gripper_cmd - 0.15)/0.05))
 
     is_touch = (ee_cube_dist < 0.017).astype(jnp.int32)
 
     is_gripped = (
-        (fixed_jaw_force > touch_threshold) & (moving_jaw_force > touch_threshold) & is_touch
+        (fixed_jaw_force > touch_threshold) & (moving_jaw_force > touch_threshold) & is_touch & (current_cube_pos[..., 2] > 0.02)
     ).astype(jnp.int32)
-    is_success = ((cube_goal_dist < tolerance) & is_gripped).astype(jnp.int32)
+    is_success = (cube_goal_dist < tolerance).astype(jnp.int32)
     is_cube_close = 1.0 - jnp.tanh(20.0 * ee_cube_dist)
     is_close_goal = 1.0 - jnp.tanh(20.0 * cube_goal_dist)
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
     is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
-    lift_reward = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed * \
-                  jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
+    lift_reward = jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
 
     potential = (
         1.0 * is_cube_close
         + 2.0 * is_very_close
         + 4.0 * is_close_goal
-        + 10.0 * is_very_close_target
-        + 4.0 * lift_reward
+        + 4.0 * is_very_close_target
+        + 6.0 * lift_reward
     )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
@@ -237,15 +249,12 @@ if __name__ == '__main__':
         k3, base_key = jax.random.split(base_key)
         obs = render_batch(mjw_model, mjw_data, render_ctx, rgb_buff)
         action = sample_action(mjw_data, k3)
-        (rew, is_gripped, is_success), fixed_force, moving_force = step_batch(
+        rew, is_touch, is_gripped, is_success = step_batch(
             cube_id, ee_id, mjw_model, mjw_data, action, goal_cube_pos, prev_ctrl,
             fixed_touch_adr, moving_touch_adr,
         )
         prev_ctrl = action
         frames.append(np.asarray(obs[0], dtype=np.uint8))
 
-        if i % 20 == 0:
-            print(f"step {i}: fixed_force={fixed_force[0]:.3f} N, "
-                  f"moving_force={moving_force[0]:.3f} N, gripped={bool(is_gripped[0])}")
-
+        
     media.write_video(path="vid.mp4", images=frames)

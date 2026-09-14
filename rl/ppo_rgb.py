@@ -11,11 +11,11 @@ class ActorConfig:
 
     img_size: int = 128
     output_features: int = 6
-    features: Tuple[int, ...] = (16, 16, 8, 4)
-    dense_features: Tuple[int, ...] = (256, 256, 128, 32)
-    log_std_features: Tuple[int, ...] = (64, 32)
+    features: Tuple[int, ...] = (16, 32, 32)
+    dense_features: Tuple[int, ...] = (256, 256)
+    log_std_features: Tuple[int, ...] = (128, 128)
     kernel_size: tuple = (3, 3)
-    dropout_rate: float = 5e-2
+ #   dropout_rate: float = 5e-2
     start_log_std: float = -0.3
 
 
@@ -23,10 +23,10 @@ class ActorConfig:
 class CriticConfig:
 
     img_size: int = 128
-    features: Tuple[int, ...] = (16, 16, 8, 1)
-    dense_features: Tuple[int, ...] =(256, 128, 64, 16)
+    features: Tuple[int, ...] = (16, 32, 32)
+    dense_features: Tuple[int, ...] =(256, 256)
     kernel_size: tuple = (3, 3)
-    dropout_rate: float = 5e-2
+#    dropout_rate: float = 5e-2
 
 
 class ActorNetwork(nn.Module):
@@ -40,41 +40,29 @@ class ActorNetwork(nn.Module):
         x = (x - 0.5) / 0.5
         #log_std = self.param("log_std", nn.initializers.constant(self.cfg.start_log_std), (1, self.cfg.output_features))
         #log_std = jnp.clip(log_std, -2.0, 0.5)
-        
         x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
 
         x = x.reshape((x.shape[0], -1))
 
         log_std = nn.Dense(self.cfg.log_std_features[0], dtype=dtype)(x)
         log_std = nn.tanh(log_std)
         log_std = nn.Dense(self.cfg.log_std_features[1], dtype=dtype)(log_std)
-        log_std = nn.tanh(log_std)
-        log_std = nn.Dense(self.cfg.output_features, dtype=dtype)(log_std)
         log_std = 3 * nn.tanh(log_std)
+        log_std = nn.Dense(6, dtype=dtype)(log_std)
         log_std = jnp.clip(log_std, -3.0, -1.0)
 
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)
+        x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)       
         x = nn.relu(x)
-        x = nn.Dense(self.cfg.dense_features[2], dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.cfg.output_features, dtype=dtype)(x)
+        x = nn.Dense(6, dtype=dtype)(x)       
         x = nn.tanh(x)
-
+        
         return MultivariateNormalDiag(x, jnp.exp(log_std))
 
 class CriticNetwork(nn.Module):
@@ -88,25 +76,15 @@ class CriticNetwork(nn.Module):
         x = (x - 0.5) / 0.5
         x = nn.Conv(features=self.cfg.features[0], strides=(4, 4), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[1], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
         x = nn.Conv(features=self.cfg.features[2], strides=(2, 2), kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
         x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
-        x = nn.Conv(features=self.cfg.features[3], kernel_size=self.cfg.kernel_size, dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dropout(self.cfg.dropout_rate, deterministic=True)(x)
 
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.cfg.dense_features[2], dtype=dtype)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.cfg.dense_features[3], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
         return x.squeeze(-1)

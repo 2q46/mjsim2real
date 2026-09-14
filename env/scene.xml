@@ -1,6 +1,14 @@
 <mujoco model="scene">
     <include file="so101.xml" />
-  
+    
+    <keyframe>
+    <key
+    name="grasp_ready"
+    qpos="-1.89504e-13 0.000435148 0.000345583 1.64147 -4.24886e-07 4.37763e-07 0.32 0 0.0149388 1 0 0 0"
+    qvel="0 0 0 0 0 0 0 0 0 0 0 0"
+    ctrl="0 0 0 1.64148 0 0"
+    />
+    </keyframe>
 
     <visual>
         <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
@@ -9,7 +17,7 @@
     </visual>
 
     <asset>
-        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
+        <texture type="skybox" builtin="gradient" rgb1="0. 0.0 0.0" rgb2="0 0 0" width="512"
             height="3072" />
         <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
             rgb2="0.1 0.2 0.3"
@@ -21,12 +29,12 @@
     <worldbody>
     <camera pos="0.889 -0.224 0.297" name="cam0" xyaxes="0.244 0.970 0.000 -0.299 0.075 0.951"/>      
     <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
-        <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane" />
+        <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" rgba="0.0 0.0 0.0 1" />
         <body name="redcube" pos="0.32 0.0 0.015">
             <freejoint/>
         <geom name="red_cube" size="0.015 0.015 0.015" type="box" rgba="1 0 0 1" 
         condim="3" friction="1 .03 .003" contype="2"
-        conaffinity="1" solref="0.01 1" mass="0.02"/>        
+        conaffinity="1" solref="0.01 1" mass="0.01"/>        
     </body>
     </worldbody>
 </mujoco>
