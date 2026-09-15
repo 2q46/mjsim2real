@@ -113,11 +113,11 @@ def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.03,
 
    
     cube_qpos_adr = get_free_body_qpos_adr(mj_model, cube_id)
-    '''
+
     qpos = _randomize_qpos(
         rng_key, qpos, batch_size, cube_qpos_adr, pos_range, qpos_noise_scale
     )
-    '''
+
     wp.copy(mjw_data.qpos, wp.from_jax(qpos))
     wp.copy(mjw_data.qvel, wp.from_jax(qvel))
     wp.copy(mjw_data.ctrl, wp.from_jax(action))
@@ -183,7 +183,7 @@ def compute_rew(
         + 2.0 * is_very_close
         + 4.0 * is_close_goal
         + 4.0 * is_very_close_target
-        + 6.0 * lift_reward
+        + 2.0 * lift_reward
     )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)

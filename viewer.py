@@ -1,19 +1,3 @@
-"""
-Interactive viewer for manually picking up / moving the cube and watching
-live ee<->cube distance + gripper touch-sensor forces, so you can eyeball
-good values for `tolerance` and `touch_threshold` in compute_rew.
-
-Uses plain CPU MuJoCo (not mujoco_warp) since interactive picking needs
-the native passive viewer. Run with:
-
-    python manual_inspect_viewer.py
-
-Controls (standard MuJoCo viewer):
-    - Double-click a body to select it (highlights it, shows info panel).
-    - Ctrl + right-click-drag on a selected body: apply/move via force.
-    - Ctrl + left-click-drag: apply torque.
-    - Scroll to zoom, left-drag (no ctrl) to orbit the camera.
-"""
 
 import os
 import time
@@ -46,7 +30,6 @@ def main():
     model = mujoco.MjModel.from_xml_path(scene_path)
     data = mujoco.MjData(model)
 
-    # start from the grasp_ready keyframe if present, else default pose
     key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "grasp_ready")
     if key_id >= 0:
         mujoco.mj_resetDataKeyframe(model, data, key_id)
@@ -60,11 +43,6 @@ def main():
     gripper_site_id = get_gripper_id(model)
     fixed_adr = get_touch_sensor_adr(model, "fixed_jaw_touch")
     moving_adr = get_touch_sensor_adr(model, "moving_jaw_touch")
-
-    print("\n--- Manual pick-and-inspect viewer ---")
-    print("Double-click a body to select it, then Ctrl+right-drag to move it.")
-    print("Live ee<->cube distance and jaw touch forces print below every 0.5s.")
-    print("Use these to eyeball good `tolerance` / `touch_threshold` values.\n")
 
     last_print = 0.0
     with mujoco.viewer.launch_passive(model, data) as viewer:
