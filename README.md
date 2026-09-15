@@ -32,7 +32,7 @@ pip install -e .
 ```
 ### 4. Begin training
 
-If running on a GPU with more than 16 GB of VRAM I would reccomend increasing the number of parallel environments through the num_envs flag to 256 or more. Also you can increase the learning rate as well.
+If running on a GPU with more than 16 GB of VRAM I would reccomend increasing the number of parallel environments through the num_envs flag to 256 or more. Also you can increase the learning rate as well. Expect convergence to take 800+ epochs.
 
 ```bash
 python main.py 

@@ -1,0 +1,9 @@
+mediapy
+wandb
+mujoco
+warp-lang==1.16.0
+mujoco-warp==3.11.0
+flax
+optax
+distrax
+orbax

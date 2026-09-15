@@ -459,18 +459,18 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_envs", type=int, default=96)
+    parser.add_argument("--num_envs", type=int, default=128)
     parser.add_argument("--eps", type=float, default=0.1)
-    parser.add_argument("--ent_coef", type=float, default=0.005)
+    parser.add_argument("--ent_coef", type=float, default=0.01)
     parser.add_argument("--lambda_", type=float, default=0.95)
     parser.add_argument("--gamma_", type=float, default=0.99)
     parser.add_argument("--num_epochs", type=int, default=1500)
     parser.add_argument("--ppo_epochs", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--checkpoint_freq", type=int, default=10)
     parser.add_argument("--image_res", nargs=2, type=int, default=[128, 128])
-    parser.add_argument("--n_timesteps", type=int, default=300)
-    parser.add_argument("--seed", type=int, default=402)
+    parser.add_argument("--n_timesteps", type=int, default=150)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_mini_batches", type=int, default=8)  
 
     args = parser.parse_args()

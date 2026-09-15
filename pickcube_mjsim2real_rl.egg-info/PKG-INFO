@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: pickcube-mjsim2real-rl
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: mediapy
+Requires-Dist: wandb
+Requires-Dist: mujoco
+Requires-Dist: warp-lang==1.16.0
+Requires-Dist: mujoco-warp==3.11.0
+Requires-Dist: flax
+Requires-Dist: optax
+Requires-Dist: distrax
+Requires-Dist: orbax
+Dynamic: requires-dist
+Dynamic: requires-python

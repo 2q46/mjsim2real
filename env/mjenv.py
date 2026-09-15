@@ -100,7 +100,7 @@ def reset_batch(mj_model, mjw_model, mjw_data, rng_key, cube_id, pos_range=0.03,
 
     key_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_KEY, "grasp_ready")
     batch_size = mjw_data.qpos.shape[0]
-    print("nkey:", mj_model.nkey)
+#    print("nkey:", mj_model.nkey)
     assert key_id >= 0, "keyframe 'grasp_ready' not found"
 
     key_qpos = jnp.array(mj_model.key_qpos[key_id], dtype=jnp.float32)  # (nq,)
@@ -135,7 +135,7 @@ def sample_action(mjw_data, rng_key):
 def scale_action_to_actuators(ctrl: jax.Array) -> jax.Array:
 
     ctrl_min = jnp.array([-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.17453])
-    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.65])
+    ctrl_max = jnp.array([ 1.91986,  1.74533,  1.69000,  1.65806,  2.84121,  0.7])
 
     normalized_ctrl = (ctrl + 1.0) / 2.0
 
@@ -175,21 +175,20 @@ def compute_rew(
     is_cube_close = 1.0 - jnp.tanh(20.0 * ee_cube_dist)
     is_close_goal = 1.0 - jnp.tanh(20.0 * cube_goal_dist)
     is_very_close = (1.0 - jnp.tanh(50.0 * ee_cube_dist)) * gripper_closed
-    is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
+    # is_very_close_target = (1.0 - jnp.tanh(50.0 * cube_goal_dist)) * gripper_closed
     lift_reward = jnp.clip((current_cube_pos[..., 2] - 0.015) / 0.1, 0.0, 1.0)
 
     potential = (
-        1.0 * is_cube_close
+        1.5 * is_cube_close
         + 2.0 * is_very_close
-        + 4.0 * is_close_goal
-        + 4.0 * is_very_close_target
-        + 2.0 * lift_reward
+        + 5.0 * is_close_goal
+        + 5.0 * lift_reward
     )
 
     action_delta = jnp.linalg.norm(prev_ctrl[..., :-1] - ctrl[..., :-1], axis=-1)
 
     # small bonus just for gripping, on top of the success bonus, to shape toward closing on the cube
-    total_reward = potential + 2.0 * is_gripped + 10.0 * is_success - 0.01 * action_delta
+    total_reward = potential + 4.0 * is_gripped + 10.0 * is_success - 0.01 * action_delta
 
     return (total_reward, is_touch, is_gripped, is_success)
 

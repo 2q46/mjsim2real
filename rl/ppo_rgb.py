@@ -12,7 +12,7 @@ class ActorConfig:
     img_size: int = 128
     output_features: int = 6
     features: Tuple[int, ...] = (16, 32, 32)
-    dense_features: Tuple[int, ...] = (256, 256)
+    dense_features: Tuple[int, ...] = (256, 256, 256)
     log_std_features: Tuple[int, ...] = (128, 128)
     kernel_size: tuple = (3, 3)
  #   dropout_rate: float = 5e-2
@@ -24,7 +24,7 @@ class CriticConfig:
 
     img_size: int = 128
     features: Tuple[int, ...] = (16, 32, 32)
-    dense_features: Tuple[int, ...] =(256, 256)
+    dense_features: Tuple[int, ...] =(256, 256, 256)
     kernel_size: tuple = (3, 3)
 #    dropout_rate: float = 5e-2
 
@@ -60,6 +60,8 @@ class ActorNetwork(nn.Module):
         x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)       
         x = nn.relu(x)
+        x = nn.Dense(self.cfg.dense_features[2], dtype=dtype)(x)       
+        x = nn.relu(x)
         x = nn.Dense(6, dtype=dtype)(x)       
         x = nn.tanh(x)
         
@@ -85,6 +87,8 @@ class CriticNetwork(nn.Module):
         x = nn.Dense(self.cfg.dense_features[0], dtype=dtype)(x)
         x = nn.relu(x)
         x = nn.Dense(self.cfg.dense_features[1], dtype=dtype)(x)
+        x = nn.relu(x)
+        x = nn.Dense(self.cfg.dense_features[2], dtype=dtype)(x)       
         x = nn.relu(x)
         x = nn.Dense(1, dtype=dtype)(x)
         return x.squeeze(-1)
