@@ -13,7 +13,7 @@ For this project I would recommend training on Google Colab using a L4 GPU or a 
 ### 1. Setup a Conda environment
 
 ```bash
-conda env -n "mjsim2real" python=3.11
+conda create -n "mjsim2real" python=3.11
 conda activate mjsim2real
 ```
 
